@@ -1,0 +1,41 @@
+{
+  "name": "CouponActivityLog",
+  "type": "object",
+  "properties": {
+    "coupon_id": {
+      "type": "string",
+      "description": "Reference to Coupon entity"
+    },
+    "action_type": {
+      "type": "string",
+      "enum": [
+        "CREATED",
+        "STATUS_CHANGED",
+        "ARCHIVED",
+        "SHARED"
+      ],
+      "description": "Type of action performed"
+    },
+    "old_status": {
+      "type": "string",
+      "description": "Previous status (for STATUS_CHANGED)"
+    },
+    "new_status": {
+      "type": "string",
+      "description": "New status (for STATUS_CHANGED)"
+    },
+    "performed_by_user_id": {
+      "type": "string",
+      "description": "User who performed the action"
+    },
+    "performed_by_user_name": {
+      "type": "string",
+      "description": "Name of user who performed the action (cached)"
+    }
+  },
+  "required": [
+    "coupon_id",
+    "action_type",
+    "performed_by_user_id"
+  ]
+}

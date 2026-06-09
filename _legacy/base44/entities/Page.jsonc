@@ -1,0 +1,40 @@
+{
+  "name": "Page",
+  "type": "object",
+  "properties": {
+    "page_id": {
+      "type": "string",
+      "description": "Unique page identifier (e.g., AdminDashboard, CreateCoupon)"
+    },
+    "page_name": {
+      "type": "string",
+      "description": "Display name of the page"
+    },
+    "page_group": {
+      "type": "string",
+      "enum": [
+        "Dashboards",
+        "Coupons",
+        "Settings"
+      ],
+      "description": "Page category/group"
+    },
+    "default_roles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Roles that have access by default (e.g., ['ADMIN', 'MARKETING'])"
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether the page is active"
+    }
+  },
+  "required": [
+    "page_id",
+    "page_name",
+    "page_group"
+  ]
+}

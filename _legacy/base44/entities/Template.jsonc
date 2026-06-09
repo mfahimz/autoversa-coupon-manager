@@ -1,0 +1,66 @@
+{
+  "name": "Template",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Template name (e.g., Ramadan Offer Template)"
+    },
+    "file_url": {
+      "type": "string",
+      "description": "URL to the uploaded image template file (PNG/JPG)"
+    },
+    "image_width": {
+      "type": "number",
+      "description": "Width of the template image in pixels"
+    },
+    "image_height": {
+      "type": "number",
+      "description": "Height of the template image in pixels"
+    },
+    "offer_id": {
+      "type": "string",
+      "description": "Linked offer ID (one-to-one relationship)"
+    },
+    "coupon_code_prefix": {
+      "type": "string",
+      "description": "Prefix for coupon codes (e.g., ALMOFF, OILCHG). Format: PREFIX_PLATE_ISSUEDATE"
+    },
+    "is_default": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether this template is the default (only one can be default)"
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether the template is active"
+    },
+    "font_family": {
+      "type": "string",
+      "enum": [
+        "Arial",
+        "Times New Roman",
+        "Courier New",
+        "Verdana",
+        "Georgia",
+        "Tahoma",
+        "Trebuchet MS",
+        "Impact"
+      ],
+      "default": "Arial",
+      "description": "Font family for all variables on this template"
+    },
+    "text_color": {
+      "type": "string",
+      "default": "#000000",
+      "description": "Text color (hex) for all variables on this template"
+    }
+  },
+  "required": [
+    "name",
+    "file_url",
+    "image_width",
+    "image_height"
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "name": "User",
+  "type": "object",
+  "properties": {
+    "user_role": {
+      "type": "string",
+      "enum": [
+        "ADMIN",
+        "ADMIN_MANAGER",
+        "CRE",
+        "MARKETING",
+        "SERVICE_ADVISOR",
+        "BRANCH_MANAGER",
+        "REPORTING_ANALYST"
+      ],
+      "default": "CRE",
+      "description": "App specific role"
+    },
+    "allowed_pages": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "List of page names this user can access"
+    },
+    "assigned_branches": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "List of branch names assigned to this user (for Marketing/Manager)"
+    },
+    "advisor_code": {
+      "type": "string",
+      "description": "Personal code assigned to SERVICE_ADVISOR users. This code is embedded in coupon codes they create for tracking purposes. Must be unique per user."
+    }
+  }
+}

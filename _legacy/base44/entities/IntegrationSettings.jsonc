@@ -1,0 +1,25 @@
+{
+  "name": "IntegrationSettings",
+  "type": "object",
+  "properties": {
+    "integration_name": {
+      "type": "string",
+      "enum": [
+        "WHATSAPP"
+      ],
+      "description": "Name of the integration"
+    },
+    "is_enabled": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether this integration is enabled"
+    },
+    "settings": {
+      "type": "object",
+      "description": "Integration-specific settings (JSON object)"
+    }
+  },
+  "required": [
+    "integration_name"
+  ]
+}

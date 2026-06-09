@@ -1,0 +1,128 @@
+{
+  "name": "Coupon",
+  "type": "object",
+  "properties": {
+    "identifier_type": {
+      "type": "string",
+      "enum": [
+        "PLATE",
+        "MOBILE"
+      ],
+      "default": "PLATE",
+      "description": "Whether coupon is linked to plate number or mobile number"
+    },
+    "coupon_code": {
+      "type": "string",
+      "description": "Generated coupon ID (PREFIX_IDENTIFIER_ISSUEDATE)"
+    },
+    "plate_number": {
+      "type": "string",
+      "description": "Vehicle plate number (formatted as per emirate) - if identifier_type is PLATE"
+    },
+    "plate_category": {
+      "type": "string",
+      "description": "Plate category (letters/digits) - if identifier_type is PLATE"
+    },
+    "plate_region": {
+      "type": "string",
+      "description": "Plate region (emirate) - if identifier_type is PLATE"
+    },
+    "plate_combined_string": {
+      "type": "string",
+      "description": "Combined identifier: either NUMBER-REGIONCODE+CATEGORY or MOBILE_XXXXX"
+    },
+    "mobile_number": {
+      "type": "string",
+      "description": "Full mobile number - if identifier_type is MOBILE"
+    },
+    "car_model": {
+      "type": "string",
+      "description": "Mercedes car model"
+    },
+    "customer_status": {
+      "type": "string",
+      "enum": [
+        "NEW",
+        "EXISTING"
+      ],
+      "default": "NEW",
+      "description": "Whether the customer is new or existing"
+    },
+    "offer_id": {
+      "type": "string",
+      "description": "Reference to Offer entity"
+    },
+    "offer_title": {
+      "type": "string",
+      "description": "Cached offer title at time of creation"
+    },
+    "valid_days": {
+      "type": "number",
+      "description": "Number of days the coupon is valid"
+    },
+    "issue_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Date when coupon was issued"
+    },
+    "expiry_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Date when coupon expires"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ACTIVE",
+        "REDEEMED",
+        "EXPIRED",
+        "CANCELLED"
+      ],
+      "default": "ACTIVE",
+      "description": "Current coupon status"
+    },
+    "template_id": {
+      "type": "string",
+      "description": "Reference to Template used for image generation"
+    },
+    "image_file_path": {
+      "type": "string",
+      "description": "URL to generated coupon PNG image"
+    },
+    "status_updated_by_user_id": {
+      "type": "string",
+      "description": "User who last updated the status"
+    },
+    "status_updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp of last status update"
+    },
+    "shared_by_user_id": {
+      "type": "string",
+      "description": "User who shared the coupon"
+    },
+    "shared_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when coupon was shared"
+    },
+    "is_archived": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether the coupon is archived (soft delete)"
+    }
+  },
+  "required": [
+    "identifier_type",
+    "coupon_code",
+    "plate_combined_string",
+    "car_model",
+    "offer_id",
+    "offer_title",
+    "valid_days",
+    "issue_date",
+    "expiry_date",
+    "template_id"
+  ]
+}

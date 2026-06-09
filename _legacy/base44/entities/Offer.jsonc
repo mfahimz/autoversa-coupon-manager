@@ -1,0 +1,57 @@
+{
+  "name": "Offer",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "Short offer title (e.g., Free Computer Scan, 20% off labour)"
+    },
+    "description": {
+      "type": "string",
+      "description": "Optional longer description of the offer"
+    },
+    "customer_status": {
+      "type": "string",
+      "enum": [
+        "NEW",
+        "EXISTING"
+      ],
+      "default": "NEW",
+      "description": "Which customers this offer applies to"
+    },
+    "valid_days": {
+      "type": "number",
+      "default": 30,
+      "description": "Default validity period in days"
+    },
+    "terms_and_conditions": {
+      "type": "string",
+      "description": "Specific terms and conditions for this offer"
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether the offer is active and available for selection"
+    },
+    "coupon_code_structure": {
+      "type": "string",
+      "description": "Defines the pattern for generating coupon codes for this offer. Example: PREFIX_ADVISORCODE_SERIAL"
+    },
+    "customizable_variables": {
+      "type": "string",
+      "description": "JSON array stored as string. Lists which template variable names can be overridden at coupon creation time for this offer. Example: [\"customer_name\",\"expiry_date\"]"
+    },
+    "offer_variables": {
+      "type": "string",
+      "description": "JSON array storing the variable configuration for this offer. Each item contains key, label, auto (boolean), print (boolean), type (text/number/dropdown), and options (array, for dropdown type only)."
+    },
+    "vehicle_config": {
+      "type": "string",
+      "description": "JSON object storing vehicle configuration for this offer. Contains mode (single_brand/multi_brand/any_brand), brands (array of brand names), and models (object mapping brand name to array of model names)."
+    }
+  },
+  "required": [
+    "title",
+    "customer_status"
+  ]
+}

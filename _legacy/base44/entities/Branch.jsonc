@@ -1,0 +1,18 @@
+{
+  "name": "Branch",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Branch name (e.g., Abu Dhabi, Dubai)"
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether the branch is active"
+    }
+  },
+  "required": [
+    "name"
+  ]
+}
