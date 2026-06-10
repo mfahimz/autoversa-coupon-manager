@@ -15,27 +15,54 @@ interface VariableConfig {
     is_system: boolean
 }
 
+interface EmirateConfig {
+    id: string
+    name: string
+    code: string
+    categories: string[]
+    is_enabled: boolean
+    sort_order: number
+}
+
 export default function AdminSettingsPage() {
     const supabase = createClient()
 
     const [variables, setVariables] = useState<VariableConfig[]>([])
-    const [loading, setLoading] = useState(true)
-    const [saving, setSaving] = useState<string | null>(null)
+    const [emirates, setEmirates] = useState<EmirateConfig[]>([])
+    const [loadingVars, setLoadingVars] = useState(true)
+    const [loadingEmirates, setLoadingEmirates] = useState(true)
+    const [savingVar, setSavingVar] = useState<string | null>(null)
+    const [savingEmirate, setSavingEmirate] = useState<string | null>(null)
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
-    const [showAddModal, setShowAddModal] = useState(false)
+    const [showAddVarModal, setShowAddVarModal] = useState(false)
     const [newVar, setNewVar] = useState({ key: '', label: '', description: '' })
     const [adding, setAdding] = useState(false)
+    const [editingEmirateId, setEditingEmirateId] = useState<string | null>(null)
+    const [editingCategories, setEditingCategories] = useState('')
 
-    useEffect(() => { loadVariables() }, [])
+    useEffect(() => {
+        loadVariables()
+        loadEmirates()
+    }, [])
 
     async function loadVariables() {
-        setLoading(true)
+        setLoadingVars(true)
         const { data } = await supabase
             .from('admin_variable_config')
             .select('*')
             .order('sort_order', { ascending: true })
         if (data) setVariables(data)
-        setLoading(false)
+        setLoadingVars(false)
+    }
+
+    async function loadEmirates() {
+        setLoadingEmirates(true)
+        const { data } = await supabase
+            .from('emirates_config')
+            .select('*')
+            .order('sort_order', { ascending: true })
+        if (data) setEmirates(data)
+        setLoadingEmirates(false)
     }
 
     function showToast(message: string, type: 'success' | 'error' = 'success') {
@@ -43,19 +70,19 @@ export default function AdminSettingsPage() {
         setTimeout(() => setToast(null), 3000)
     }
 
-    async function toggleEnabled(variable: VariableConfig) {
-        setSaving(variable.id)
+    async function toggleVariable(variable: VariableConfig) {
+        setSavingVar(variable.id)
         const { error } = await supabase
             .from('admin_variable_config')
             .update({ is_enabled: !variable.is_enabled })
             .eq('id', variable.id)
-        if (error) { showToast('Failed to update variable', 'error') }
-        else { showToast(`${variable.label} ${!variable.is_enabled ? 'enabled' : 'disabled'}`) }
-        setSaving(null)
+        if (error) showToast('Failed to update variable', 'error')
+        else showToast(`${variable.label} ${!variable.is_enabled ? 'enabled' : 'disabled'}`)
+        setSavingVar(null)
         loadVariables()
     }
 
-    async function updateLabel(variable: VariableConfig, newLabel: string) {
+    async function updateVariableLabel(variable: VariableConfig, newLabel: string) {
         const { error } = await supabase
             .from('admin_variable_config')
             .update({ label: newLabel })
@@ -63,36 +90,6 @@ export default function AdminSettingsPage() {
         if (error) showToast('Failed to update label', 'error')
         else showToast('Label updated')
         loadVariables()
-    }
-
-    async function handleAddVariable() {
-        if (!newVar.key.trim()) { showToast('Key is required', 'error'); return }
-        if (!newVar.label.trim()) { showToast('Label is required', 'error'); return }
-
-        const key = newVar.key.trim().toUpperCase().replace(/\s+/g, '_')
-        const exists = variables.some(v => v.key === key)
-        if (exists) { showToast('A variable with this key already exists', 'error'); return }
-
-        setAdding(true)
-        const { error } = await supabase
-            .from('admin_variable_config')
-            .insert({
-                key,
-                label: newVar.label.trim(),
-                description: newVar.description.trim() || null,
-                is_enabled: true,
-                sort_order: variables.length + 1,
-                is_system: false,
-            })
-
-        if (error) { showToast('Failed to add variable', 'error') }
-        else {
-            showToast('Variable added successfully')
-            setShowAddModal(false)
-            setNewVar({ key: '', label: '', description: '' })
-            loadVariables()
-        }
-        setAdding(false)
     }
 
     async function deleteVariable(variable: VariableConfig) {
@@ -104,6 +101,63 @@ export default function AdminSettingsPage() {
         if (error) showToast('Failed to delete variable', 'error')
         else showToast('Variable deleted')
         loadVariables()
+    }
+
+    async function handleAddVariable() {
+        if (!newVar.key.trim()) { showToast('Key is required', 'error'); return }
+        if (!newVar.label.trim()) { showToast('Label is required', 'error'); return }
+        const key = newVar.key.trim().toUpperCase().replace(/\s+/g, '_')
+        if (variables.some(v => v.key === key)) { showToast('Variable key already exists', 'error'); return }
+        setAdding(true)
+        const { error } = await supabase.from('admin_variable_config').insert({
+            key,
+            label: newVar.label.trim(),
+            description: newVar.description.trim() || null,
+            is_enabled: true,
+            sort_order: variables.length + 1,
+            is_system: false,
+        })
+        if (error) showToast('Failed to add variable', 'error')
+        else {
+            showToast('Variable added successfully')
+            setShowAddVarModal(false)
+            setNewVar({ key: '', label: '', description: '' })
+            loadVariables()
+        }
+        setAdding(false)
+    }
+
+    async function toggleEmirate(emirate: EmirateConfig) {
+        setSavingEmirate(emirate.id)
+        const { error } = await supabase
+            .from('emirates_config')
+            .update({ is_enabled: !emirate.is_enabled })
+            .eq('id', emirate.id)
+        if (error) showToast('Failed to update emirate', 'error')
+        else showToast(`${emirate.name} ${!emirate.is_enabled ? 'enabled' : 'disabled'}`)
+        setSavingEmirate(null)
+        loadEmirates()
+    }
+
+    async function saveEmirateCategories(emirate: EmirateConfig) {
+        const cats = editingCategories
+            .split(',')
+            .map(c => c.trim().toUpperCase())
+            .filter(c => c.length > 0)
+
+        if (cats.length === 0) { showToast('At least one category is required', 'error'); return }
+
+        const { error } = await supabase
+            .from('emirates_config')
+            .update({ categories: cats })
+            .eq('id', emirate.id)
+
+        if (error) showToast('Failed to update categories', 'error')
+        else {
+            showToast(`${emirate.name} categories updated`)
+            setEditingEmirateId(null)
+            loadEmirates()
+        }
     }
 
     return (
@@ -135,30 +189,23 @@ export default function AdminSettingsPage() {
                     { label: 'Settings' },
                 ]} />
 
-                <div style={{
-                    display: 'flex', justifyContent: 'space-between',
-                    alignItems: 'center', marginBottom: '32px',
-                }}>
-                    <div>
-                        <h1 style={{ fontSize: '22px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>
-                            Admin Settings
-                        </h1>
-                        <p style={{ color: '#666666', fontSize: '14px', marginTop: '4px' }}>
-                            Configure app behaviour without touching the codebase.
-                        </p>
-                    </div>
+                <div style={{ marginBottom: '32px' }}>
+                    <h1 style={{ fontSize: '22px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>
+                        Admin Settings
+                    </h1>
+                    <p style={{ color: '#666666', fontSize: '14px', marginTop: '4px' }}>
+                        Configure app behaviour without touching the codebase.
+                    </p>
                 </div>
 
-                {/* Section — Coupon Print Variables */}
+                {/* Section 1 — Coupon Print Variables */}
                 <div style={{
                     backgroundColor: '#FFFFFF', borderRadius: '16px',
-                    boxShadow: '0 1px 4px rgba(0,0,0,0.06)', overflow: 'hidden',
-                    marginBottom: '32px',
+                    boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+                    overflow: 'hidden', marginBottom: '24px',
                 }}>
-                    {/* Section Header */}
                     <div style={{
-                        padding: '20px 24px',
-                        borderBottom: '1px solid #F0F0F0',
+                        padding: '20px 24px', borderBottom: '1px solid #F0F0F0',
                         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                     }}>
                         <div>
@@ -166,12 +213,12 @@ export default function AdminSettingsPage() {
                                 Coupon Print Variables
                             </h2>
                             <p style={{ fontSize: '13px', color: '#666', marginTop: '4px' }}>
-                                These variables are available when configuring what gets printed on a coupon design.
+                                Variables available when configuring what gets printed on a coupon design.
                                 Disable to hide from offer creation. System variables cannot be deleted.
                             </p>
                         </div>
                         <button
-                            onClick={() => setShowAddModal(true)}
+                            onClick={() => setShowAddVarModal(true)}
                             style={{
                                 padding: '9px 18px', backgroundColor: '#0074BD', color: '#FFFFFF',
                                 border: 'none', borderRadius: '10px', fontSize: '13px',
@@ -182,8 +229,7 @@ export default function AdminSettingsPage() {
                         </button>
                     </div>
 
-                    {/* Variable Rows */}
-                    {loading ? (
+                    {loadingVars ? (
                         Array.from({ length: 6 }).map((_, i) => (
                             <div key={i} style={{
                                 height: '60px', margin: '8px 24px', backgroundColor: '#F0F0F0',
@@ -196,20 +242,161 @@ export default function AdminSettingsPage() {
                                 key={v.id}
                                 variable={v}
                                 isLast={i === variables.length - 1}
-                                saving={saving === v.id}
-                                onToggle={() => toggleEnabled(v)}
-                                onLabelSave={(label) => updateLabel(v, label)}
+                                saving={savingVar === v.id}
+                                onToggle={() => toggleVariable(v)}
+                                onLabelSave={(label) => updateVariableLabel(v, label)}
                                 onDelete={() => deleteVariable(v)}
                             />
                         ))
                     )}
                 </div>
 
-                {/* More sections will go here in future */}
+                {/* Section 2 — Emirates Configuration */}
                 <div style={{
                     backgroundColor: '#FFFFFF', borderRadius: '16px',
                     boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
-                    padding: '24px',
+                    overflow: 'hidden', marginBottom: '24px',
+                }}>
+                    <div style={{
+                        padding: '20px 24px', borderBottom: '1px solid #F0F0F0',
+                    }}>
+                        <h2 style={{ fontSize: '16px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>
+                            Emirates & Plate Categories
+                        </h2>
+                        <p style={{ fontSize: '13px', color: '#666', marginTop: '4px' }}>
+                            Control which emirates appear in the coupon creation form and manage their
+                            plate category codes. Categories are comma-separated.
+                        </p>
+                    </div>
+
+                    {loadingEmirates ? (
+                        Array.from({ length: 7 }).map((_, i) => (
+                            <div key={i} style={{
+                                height: '60px', margin: '8px 24px', backgroundColor: '#F0F0F0',
+                                borderRadius: '8px', animation: 'pulse 1.5s ease-in-out infinite',
+                            }} />
+                        ))
+                    ) : (
+                        emirates.map((emirate, i) => (
+                            <div
+                                key={emirate.id}
+                                style={{
+                                    padding: '16px 24px',
+                                    borderBottom: i < emirates.length - 1 ? '1px solid #F5F5F5' : 'none',
+                                    opacity: emirate.is_enabled ? 1 : 0.5,
+                                    transition: 'opacity 0.2s',
+                                }}
+                            >
+                                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px' }}>
+
+                                    {/* Toggle */}
+                                    <div
+                                        onClick={() => toggleEmirate(emirate)}
+                                        style={{
+                                            width: '40px', height: '22px', borderRadius: '100px', flexShrink: 0,
+                                            backgroundColor: emirate.is_enabled ? '#0074BD' : '#CCCCCC',
+                                            cursor: savingEmirate === emirate.id ? 'not-allowed' : 'pointer',
+                                            position: 'relative', transition: 'background-color 0.2s',
+                                            marginTop: '2px',
+                                        }}
+                                    >
+                                        <div style={{
+                                            position: 'absolute', top: '2px',
+                                            left: emirate.is_enabled ? '20px' : '2px',
+                                            width: '18px', height: '18px', borderRadius: '50%',
+                                            backgroundColor: '#FFFFFF', transition: 'left 0.2s',
+                                            boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                                        }} />
+                                    </div>
+
+                                    {/* Emirate code badge */}
+                                    <span style={{
+                                        fontSize: '11px', fontFamily: 'monospace', fontWeight: '600',
+                                        color: '#162860', backgroundColor: '#EEF2FF',
+                                        padding: '4px 10px', borderRadius: '6px',
+                                        whiteSpace: 'nowrap', flexShrink: 0,
+                                    }}>
+                                        {emirate.code}
+                                    </span>
+
+                                    {/* Name + categories */}
+                                    <div style={{ flex: 1 }}>
+                                        <p style={{ fontSize: '14px', fontWeight: '600', color: '#1A1A1A', margin: '0 0 6px' }}>
+                                            {emirate.name}
+                                        </p>
+
+                                        {editingEmirateId === emirate.id ? (
+                                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                                                <input
+                                                    value={editingCategories}
+                                                    onChange={e => setEditingCategories(e.target.value)}
+                                                    style={{
+                                                        flex: 1, minWidth: '200px', padding: '7px 10px',
+                                                        fontSize: '13px', fontFamily: 'monospace',
+                                                        border: '1.5px solid #0074BD', borderRadius: '8px',
+                                                        outline: 'none', color: '#1A1A1A',
+                                                    }}
+                                                    placeholder="e.g. A, B, C, D"
+                                                />
+                                                <button
+                                                    onClick={() => saveEmirateCategories(emirate)}
+                                                    style={{
+                                                        padding: '7px 14px', backgroundColor: '#0074BD', color: '#FFF',
+                                                        border: 'none', borderRadius: '8px', fontSize: '12px',
+                                                        fontWeight: '600', cursor: 'pointer',
+                                                    }}
+                                                >
+                                                    Save
+                                                </button>
+                                                <button
+                                                    onClick={() => setEditingEmirateId(null)}
+                                                    style={{
+                                                        padding: '7px 14px', backgroundColor: '#F0F0F0', color: '#444',
+                                                        border: 'none', borderRadius: '8px', fontSize: '12px',
+                                                        fontWeight: '600', cursor: 'pointer',
+                                                    }}
+                                                >
+                                                    Cancel
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                                    {emirate.categories.map(cat => (
+                                                        <span key={cat} style={{
+                                                            fontSize: '11px', fontFamily: 'monospace',
+                                                            backgroundColor: '#F0F0F0', color: '#444',
+                                                            padding: '2px 7px', borderRadius: '4px',
+                                                        }}>
+                                                            {cat}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                                <span
+                                                    onClick={() => {
+                                                        setEditingEmirateId(emirate.id)
+                                                        setEditingCategories(emirate.categories.join(', '))
+                                                    }}
+                                                    style={{
+                                                        fontSize: '11px', color: '#0074BD',
+                                                        cursor: 'pointer', fontWeight: '500',
+                                                    }}
+                                                >
+                                                    edit categories
+                                                </span>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        ))
+                    )}
+                </div>
+
+                {/* Section 3 — More Settings placeholder */}
+                <div style={{
+                    backgroundColor: '#FFFFFF', borderRadius: '16px',
+                    boxShadow: '0 1px 4px rgba(0,0,0,0.06)', padding: '24px',
                 }}>
                     <h2 style={{ fontSize: '16px', fontWeight: '700', color: '#1A1A1A', margin: '0 0 8px' }}>
                         More Settings
@@ -222,9 +409,9 @@ export default function AdminSettingsPage() {
             </main>
 
             {/* Add Variable Modal */}
-            {showAddModal && (
+            {showAddVarModal && (
                 <div
-                    onClick={e => { if (e.target === e.currentTarget) setShowAddModal(false) }}
+                    onClick={e => { if (e.target === e.currentTarget) setShowAddVarModal(false) }}
                     style={{
                         position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)',
                         zIndex: 500, display: 'flex', alignItems: 'center',
@@ -243,7 +430,7 @@ export default function AdminSettingsPage() {
                                 Add Custom Variable
                             </h2>
                             <button
-                                onClick={() => setShowAddModal(false)}
+                                onClick={() => setShowAddVarModal(false)}
                                 style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#666' }}
                             >
                                 ✕
@@ -284,7 +471,7 @@ export default function AdminSettingsPage() {
 
                             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '8px' }}>
                                 <button
-                                    onClick={() => setShowAddModal(false)}
+                                    onClick={() => setShowAddVarModal(false)}
                                     style={{
                                         padding: '10px 20px', backgroundColor: '#F0F0F0', color: '#444',
                                         border: 'none', borderRadius: '8px', fontSize: '14px',
@@ -336,7 +523,6 @@ function VariableRow({
             opacity: variable.is_enabled ? 1 : 0.5,
             transition: 'opacity 0.2s',
         }}>
-            {/* Enable/Disable Toggle */}
             <div
                 onClick={onToggle}
                 style={{
@@ -355,7 +541,6 @@ function VariableRow({
                 }} />
             </div>
 
-            {/* Key Badge */}
             <span style={{
                 fontSize: '11px', fontFamily: 'monospace', fontWeight: '600',
                 color: '#162860', backgroundColor: '#EEF2FF',
@@ -365,16 +550,13 @@ function VariableRow({
                 {variable.key}
             </span>
 
-            {/* Label — editable */}
             <div style={{ flex: 1 }}>
                 {editingLabel ? (
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                         <input
                             value={labelValue}
                             onChange={e => setLabelValue(e.target.value)}
-                            style={{
-                                ...inputStyle, padding: '6px 10px', fontSize: '13px', flex: 1,
-                            }}
+                            style={{ ...inputStyle, padding: '6px 10px', fontSize: '13px', flex: 1 }}
                             autoFocus
                         />
                         <button
@@ -404,10 +586,7 @@ function VariableRow({
                             {variable.label}
                             <span
                                 onClick={() => setEditingLabel(true)}
-                                style={{
-                                    fontSize: '11px', color: '#0074BD', marginLeft: '8px',
-                                    cursor: 'pointer', fontWeight: '400',
-                                }}
+                                style={{ fontSize: '11px', color: '#0074BD', marginLeft: '8px', cursor: 'pointer', fontWeight: '400' }}
                             >
                                 rename
                             </span>
@@ -421,7 +600,6 @@ function VariableRow({
                 )}
             </div>
 
-            {/* System badge or delete */}
             {variable.is_system ? (
                 <span style={{
                     fontSize: '11px', color: '#888', backgroundColor: '#F5F5F5',
