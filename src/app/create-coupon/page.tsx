@@ -738,3 +738,6 @@ const errorBorderStyle: React.CSSProperties = {
 const errorStyle: React.CSSProperties = {
   fontSize: '12px', color: '#D0021B', marginTop: '4px',
 }
+export const dynamic = 'force-dynamic'
+
+export const dynamic = 'force-dynamic'

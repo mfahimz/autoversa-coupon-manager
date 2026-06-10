@@ -634,3 +634,6 @@ const inputStyle: React.CSSProperties = {
     backgroundColor: '#FFFFFF', color: '#1A1A1A',
     boxSizing: 'border-box', fontFamily: 'inherit',
 }
+export const dynamic = 'force-dynamic'
+
+export const dynamic = 'force-dynamic'

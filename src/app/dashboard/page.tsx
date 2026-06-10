@@ -324,3 +324,6 @@ function getGreeting() {
   if (hour < 17) return 'afternoon'
   return 'evening'
 }
+export const dynamic = 'force-dynamic'
+
+export const dynamic = 'force-dynamic'

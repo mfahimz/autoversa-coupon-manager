@@ -214,3 +214,6 @@ export default function OffersPage() {
     </div>
   )
 }
+export const dynamic = 'force-dynamic'
+
+export const dynamic = 'force-dynamic'
