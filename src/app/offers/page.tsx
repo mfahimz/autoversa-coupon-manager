@@ -16,7 +16,10 @@ interface Offer {
   is_active: boolean
   coupon_code_structure: string | null
   offer_variables: string[] | null
+  coupon_cap: number | null
+  visited_count: number
   created_at: string
+  first_batch_target: number | null
 }
 
 export default function OffersPage() {
@@ -109,13 +112,14 @@ export default function OffersPage() {
           backgroundColor: '#FFFFFF', borderRadius: '16px',
           boxShadow: '0 1px 4px rgba(0,0,0,0.06)', overflow: 'hidden',
         }}>
+          {/* Table Header */}
           <div style={{
             display: 'grid',
-            gridTemplateColumns: '2fr 1.5fr 1fr 1fr 1fr 160px',
+            gridTemplateColumns: '2fr 1.5fr 1fr 1fr 1fr 1fr 160px',
             padding: '12px 24px', backgroundColor: '#F7F7F7',
             borderBottom: '1px solid #EEEEEE',
           }}>
-            {['Title', 'Identifier', 'Valid Days', 'Commission', 'Status', 'Actions'].map(h => (
+            {['Title', 'Identifier', 'Valid Days', 'Commission', 'Visited', 'Status', 'Actions'].map(h => (
               <span key={h} style={{
                 fontSize: '12px', fontWeight: '600', color: '#666666',
                 textTransform: 'uppercase', letterSpacing: '0.5px',
@@ -146,11 +150,12 @@ export default function OffersPage() {
             offers.map((offer, i) => (
               <div key={offer.id} style={{
                 display: 'grid',
-                gridTemplateColumns: '2fr 1.5fr 1fr 1fr 1fr 160px',
+                gridTemplateColumns: '2fr 1.5fr 1fr 1fr 1fr 1fr 160px',
                 padding: '16px 24px',
                 borderBottom: i < offers.length - 1 ? '1px solid #F5F5F5' : 'none',
                 alignItems: 'center',
               }}>
+                {/* Title */}
                 <div>
                   <p style={{ fontSize: '14px', fontWeight: '600', color: '#1A1A1A', margin: 0 }}>
                     {offer.title}
@@ -165,15 +170,35 @@ export default function OffersPage() {
                     </p>
                   )}
                 </div>
+
+                {/* Identifier */}
                 <span style={{ fontSize: '13px', color: '#444', fontFamily: 'monospace' }}>
                   {offer.offer_identifier}
                 </span>
+
+                {/* Valid Days */}
                 <span style={{ fontSize: '13px', color: '#444' }}>
                   {offer.valid_days} days
                 </span>
+
+                {/* Commission */}
                 <span style={{ fontSize: '13px', color: '#444' }}>
                   {offer.commission_amount ? `AED ${offer.commission_amount}` : '—'}
                 </span>
+
+                {/* Visited Count */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ fontSize: '15px', fontWeight: '700', color: '#0074BD' }}>
+                    {offer.visited_count ?? 0}
+                  </span>
+                  {offer.first_batch_target && (
+                    <span style={{ fontSize: '12px', color: '#888' }}>
+                      / {offer.first_batch_target}
+                    </span>
+                  )}
+                </div>
+
+                {/* Status */}
                 <span style={{
                   display: 'inline-flex', alignItems: 'center',
                   padding: '4px 10px', borderRadius: '100px',
@@ -183,6 +208,8 @@ export default function OffersPage() {
                 }}>
                   {offer.is_active ? 'Active' : 'Inactive'}
                 </span>
+
+                {/* Actions */}
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button
                     onClick={() => router.push(`/offers/${offer.id}/edit`)}
@@ -214,6 +241,5 @@ export default function OffersPage() {
     </div>
   )
 }
-export const dynamic = 'force-dynamic'
 
 export const dynamic = 'force-dynamic'

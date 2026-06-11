@@ -6,6 +6,8 @@ import { createClient } from '@/lib/supabase/client'
 import Breadcrumb from '@/components/layout/Breadcrumb'
 import Navbar from '@/components/layout/Navbar'
 
+
+
 interface VariableConfig {
     key: string
     label: string
@@ -24,6 +26,11 @@ interface OfferFormProps {
         coupon_code_structure: string | null
         offer_variables: string[] | null
         is_active: boolean
+        coupon_cap: number | null
+        distribution_window_days: number | null
+        first_batch_target: number | null
+        start_date: string | null
+        vehicle_config: string | null
     }
 }
 
@@ -32,6 +39,15 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
     const supabase = createClient()
 
     const [availableVariables, setAvailableVariables] = useState<VariableConfig[]>([])
+
+    // parse vehicle_config from JSON string
+    const parsedVehicleConfig = (() => {
+        try { return initialData?.vehicle_config ? JSON.parse(initialData.vehicle_config) : null }
+        catch { return null }
+    })()
+
+    const make = parsedVehicleConfig?.make || parsedVehicleConfig?.brands?.[0] || 'BMW'
+
     const [form, setForm] = useState({
         title: initialData?.title || '',
         description: initialData?.description || '',
@@ -41,7 +57,13 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
         coupon_code_structure: initialData?.coupon_code_structure || '',
         offer_variables: initialData?.offer_variables || [] as string[],
         is_active: initialData?.is_active ?? true,
+        coupon_cap: initialData?.coupon_cap?.toString() || '800',
+        distribution_window_days: initialData?.distribution_window_days?.toString() || '60',
+        first_batch_target: initialData?.first_batch_target?.toString() || '100',
+        start_date: initialData?.start_date || '',
+        vehicle_make: make,
     })
+
     const [saving, setSaving] = useState(false)
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
 
@@ -73,8 +95,14 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
     async function handleSave() {
         if (!form.title.trim()) { showToast('Title is required', 'error'); return }
         if (!form.offer_identifier.trim()) { showToast('Offer identifier is required', 'error'); return }
+        if (!form.start_date) { showToast('Start date is required', 'error'); return }
 
         setSaving(true)
+
+        const vehicle_config = JSON.stringify({
+            make: form.vehicle_make,
+        })
+
         const payload = {
             title: form.title.trim(),
             description: form.description.trim() || null,
@@ -84,6 +112,11 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
             coupon_code_structure: form.coupon_code_structure.trim() || null,
             offer_variables: form.offer_variables.length > 0 ? form.offer_variables : null,
             is_active: form.is_active,
+            coupon_cap: Number(form.coupon_cap),
+            distribution_window_days: Number(form.distribution_window_days),
+            first_batch_target: Number(form.first_batch_target),
+            start_date: form.start_date,
+            vehicle_config,
         }
 
         if (mode === 'edit' && initialData) {
@@ -104,6 +137,7 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
         <div style={{ minHeight: '100vh', backgroundColor: '#F7F7F7', paddingTop: '16px' }}>
             <style>{`
         @keyframes slideIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
         input:focus, textarea:focus, select:focus { border-color: #0074BD !important; outline: none; }
       `}</style>
 
@@ -133,44 +167,40 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                         {mode === 'create' ? 'New Offer' : 'Edit Offer'}
                     </h1>
                     <p style={{ color: '#666666', fontSize: '14px', marginTop: '4px' }}>
-                        {mode === 'create'
-                            ? 'Fill in the details to create a new offer.'
-                            : 'Update the offer details below.'}
+                        {mode === 'create' ? 'Fill in the details to create a new offer.' : 'Update the offer details below.'}
                     </p>
                 </div>
 
                 <div style={{
                     backgroundColor: '#FFFFFF', borderRadius: '16px',
                     padding: '32px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
-                    display: 'flex', flexDirection: 'column', gap: '24px',
+                    display: 'flex', flexDirection: 'column', gap: '28px',
                 }}>
 
-                    {/* Title */}
+                    {/* ── SECTION: Basic Info ── */}
+                    <SectionHeader title="Basic Info" />
+
                     <div>
                         <label style={labelStyle}>Title *</label>
                         <input
                             style={inputStyle}
                             value={form.title}
                             onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
-                            placeholder="e.g. Minor Service Offer"
+                            placeholder="e.g. Pre-Launch Offer 2026"
                         />
                     </div>
 
-                    {/* Offer Identifier */}
                     <div>
                         <label style={labelStyle}>Offer Identifier *</label>
                         <input
                             style={inputStyle}
                             value={form.offer_identifier}
                             onChange={e => setForm(f => ({ ...f, offer_identifier: e.target.value.toUpperCase() }))}
-                            placeholder="e.g. MINOR-SERVICE-2026"
+                            placeholder="e.g. PRELAUNCH-2026"
                         />
-                        <p style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>
-                            Auto-uppercased. Used in coupon code generation.
-                        </p>
+                        <p style={hintStyle}>Auto-uppercased. Used in coupon code generation.</p>
                     </div>
 
-                    {/* Description */}
                     <div>
                         <label style={labelStyle}>Description</label>
                         <textarea
@@ -181,10 +211,59 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                         />
                     </div>
 
-                    {/* Valid Days + Commission */}
+                    <Divider />
+
+                    {/* ── SECTION: Rules ── */}
+                    <SectionHeader title="Rules" />
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '16px' }}>
+                        <div>
+                            <label style={labelStyle}>Start Date *</label>
+                            <input
+                                style={inputStyle}
+                                type="date"
+                                value={form.start_date}
+                                onChange={e => setForm(f => ({ ...f, start_date: e.target.value }))}
+                            />
+                        </div>
+                        <div>
+                            <label style={labelStyle}>Coupon Cap</label>
+                            <input
+                                style={inputStyle}
+                                type="number"
+                                value={form.coupon_cap}
+                                onChange={e => setForm(f => ({ ...f, coupon_cap: e.target.value }))}
+                                min="1"
+                            />
+                            <p style={hintStyle}>Max coupons that can be issued.</p>
+                        </div>
+                        <div>
+                            <label style={labelStyle}>Distribution Window (days)</label>
+                            <input
+                                style={inputStyle}
+                                type="number"
+                                value={form.distribution_window_days}
+                                onChange={e => setForm(f => ({ ...f, distribution_window_days: e.target.value }))}
+                                min="1"
+                            />
+                            <p style={hintStyle}>Days from start date coupons can be issued.</p>
+                        </div>
+                        <div>
+                            <label style={labelStyle}>Visit Target</label>
+                            <input
+                                style={inputStyle}
+                                type="number"
+                                value={form.first_batch_target}
+                                onChange={e => setForm(f => ({ ...f, first_batch_target: e.target.value }))}
+                                min="1"
+                            />
+                            <p style={hintStyle}>Number of visits to hit before switching to next offer.</p>
+                        </div>
+                    </div>
+
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                         <div>
-                            <label style={labelStyle}>Valid Days</label>
+                            <label style={labelStyle}>Valid Days (per coupon)</label>
                             <input
                                 style={inputStyle}
                                 type="number"
@@ -192,9 +271,10 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                                 onChange={e => setForm(f => ({ ...f, valid_days: Number(e.target.value) }))}
                                 min="1"
                             />
+                            <p style={hintStyle}>Days from issue date until coupon expires.</p>
                         </div>
                         <div>
-                            <label style={labelStyle}>Commission (AED)</label>
+                            <label style={labelStyle}>Commission per Redemption (AED)</label>
                             <input
                                 style={inputStyle}
                                 type="number"
@@ -206,9 +286,28 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                         </div>
                     </div>
 
-                    {/* Coupon Code Structure */}
+                    <Divider />
+
+                    {/* ── SECTION: Vehicle Eligibility ── */}
+                    <SectionHeader title="Vehicle Eligibility" />
+
                     <div>
-                        <label style={labelStyle}>Coupon Code Structure</label>
+                        <label style={labelStyle}>Make</label>
+                        <input
+                            style={{ ...inputStyle, backgroundColor: '#F7F7F7', color: '#888' }}
+                            value={form.vehicle_make}
+                            readOnly
+                        />
+                        <p style={hintStyle}>Currently BMW only.</p>
+                    </div>
+
+                    <Divider />
+
+                    {/* ── SECTION: Coupon Code ── */}
+                    <SectionHeader title="Coupon Code" />
+
+                    <div>
+                        <label style={labelStyle}>Code Structure</label>
                         <div style={{ display: 'flex', gap: '8px' }}>
                             <input
                                 style={{ ...inputStyle, flex: 1 }}
@@ -230,20 +329,16 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                                 Use Preset
                             </button>
                         </div>
-                        <p style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>
-                            Preset format: AUTOVERSA_[ADVISOR_CODE]_[OFFER_IDENTIFIER]_[PLATE_OR_MOBILE_LAST5]
-                        </p>
                     </div>
 
-                    {/* Divider */}
-                    <div style={{ borderTop: '1px solid #F0F0F0', margin: '4px 0' }} />
+                    <Divider />
 
-                    {/* Offer Variables */}
+                    {/* ── SECTION: Print Variables ── */}
+                    <SectionHeader title="Coupon Print Variables" />
+
                     <div>
-                        <label style={labelStyle}>Coupon Print Variables</label>
-                        <p style={{ fontSize: '13px', color: '#888', marginBottom: '14px', marginTop: '2px' }}>
-                            Select what information gets printed on the coupon design.
-                            Manage available variables in{' '}
+                        <p style={{ ...hintStyle, marginBottom: '14px' }}>
+                            Select what information gets printed on the coupon design. Manage available variables in{' '}
                             <span
                                 onClick={() => router.push('/admin/settings')}
                                 style={{ color: '#0074BD', cursor: 'pointer' }}
@@ -317,10 +412,9 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                         )}
                     </div>
 
-                    {/* Divider */}
-                    <div style={{ borderTop: '1px solid #F0F0F0', margin: '4px 0' }} />
+                    <Divider />
 
-                    {/* Is Active */}
+                    {/* ── SECTION: Status ── */}
                     <div style={{
                         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                         padding: '16px', backgroundColor: '#F7F7F7', borderRadius: '10px',
@@ -352,7 +446,7 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                         </div>
                     </div>
 
-                    {/* Action Buttons */}
+                    {/* ── Action Buttons ── */}
                     <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
                         <button
                             onClick={() => router.push('/offers')}
@@ -385,6 +479,21 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
     )
 }
 
+function SectionHeader({ title }: { title: string }) {
+    return (
+        <p style={{
+            fontSize: '13px', fontWeight: '700', color: '#162860',
+            textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0,
+        }}>
+            {title}
+        </p>
+    )
+}
+
+function Divider() {
+    return <div style={{ borderTop: '1px solid #F0F0F0', margin: '4px 0' }} />
+}
+
 const labelStyle: React.CSSProperties = {
     display: 'block', fontSize: '13px', fontWeight: '600',
     color: '#1A1A1A', marginBottom: '6px',
@@ -395,4 +504,8 @@ const inputStyle: React.CSSProperties = {
     border: '1.5px solid #E0E0E0', borderRadius: '8px', outline: 'none',
     backgroundColor: '#FFFFFF', color: '#1A1A1A',
     boxSizing: 'border-box', fontFamily: 'inherit',
+}
+
+const hintStyle: React.CSSProperties = {
+    fontSize: '12px', color: '#888', marginTop: '4px', marginBottom: 0,
 }

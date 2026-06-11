@@ -6,14 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 
 const NAV_ITEMS = [
     { label: 'Dashboard', href: '/dashboard' },
-    {
-        label: 'Coupons',
-        children: [
-            { label: 'Create Coupon', href: '/create-coupon' },
-            { label: 'All Coupons', href: '/coupons' },
-            { label: 'Verify Coupon', href: '/verify-coupon' },
-        ],
-    },
+    { label: 'Coupons', href: '/coupons' },
     { label: 'Appointments', href: '/appointments' },
     { label: 'Offers', href: '/offers' },
     { label: 'Reports', href: '/reporting' },
@@ -21,7 +14,7 @@ const NAV_ITEMS = [
         label: 'Admin',
         children: [
             { label: 'Users', href: '/users' },
-            { label: 'Campaign Config', href: '/campaign-config' },
+            { label: 'Settings', href: '/admin/settings' },
         ],
     },
 ]
@@ -115,11 +108,7 @@ export default function Navbar() {
                                         transition: 'background-color 0.2s',
                                     }}>
                                         {item.label}
-                                        <span style={{
-                                            fontSize: '10px',
-                                            opacity: 0.7,
-                                            marginTop: '1px',
-                                        }}>▼</span>
+                                        <span style={{ fontSize: '10px', opacity: 0.7, marginTop: '1px' }}>▼</span>
                                     </button>
 
                                     {openDropdown === item.label && (
@@ -133,7 +122,7 @@ export default function Navbar() {
                                             padding: '8px',
                                             paddingTop: '16px',
                                             marginTop: '0px',
-                                            minWidth: '200px',
+                                            minWidth: '180px',
                                             whiteSpace: 'nowrap',
                                         }}>
                                             {item.children.map(child => (

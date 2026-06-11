@@ -5,4 +5,3 @@ export default function NewOfferPage() {
 }
 export const dynamic = 'force-dynamic'
 
-export const dynamic = 'force-dynamic'

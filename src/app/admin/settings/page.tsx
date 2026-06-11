@@ -636,4 +636,3 @@ const inputStyle: React.CSSProperties = {
 }
 export const dynamic = 'force-dynamic'
 
-export const dynamic = 'force-dynamic'
