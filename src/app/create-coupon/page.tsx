@@ -1,26 +1,16 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/layout/Navbar'
 import Breadcrumb from '@/components/layout/Breadcrumb'
-
-const BMW_MODELS = [
-  '1 Series', '2 Series Coupé', '2 Series Gran Coupé', '3 Series', '4 Series Coupé',
-  '4 Series Gran Coupé', '4 Series Convertible', '5 Series', '7 Series', '8 Series Coupé',
-  '8 Series Convertible', '8 Series Gran Coupé', 'X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7', 'XM',
-  'i4', 'i5', 'i7', 'iX', 'iX1', 'iX2', 'iX3', 'Z4',
-  'M2', 'M3', 'M4', 'M5', 'M8', 'X3 M', 'X4 M', 'X5 M', 'X6 M',
-]
 
 interface Offer {
   id: string
   title: string
   offer_identifier: string
   valid_days: number
-  coupon_code_structure: string | null
-  offer_variables: string[] | null
 }
 
 interface EmirateConfig {
@@ -38,8 +28,6 @@ interface Profile {
   user_role: string
 }
 
-type IdentifierType = 'PLATE' | 'MOBILE'
-
 export default function CreateCouponPage() {
   const router = useRouter()
   const supabase = createClient()
@@ -50,17 +38,15 @@ export default function CreateCouponPage() {
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
-  const [success, setSuccess] = useState<{ coupons: any[] } | null>(null)
+  const [success, setSuccess] = useState<{ coupons: any[]; sequenceNumber: number } | null>(null)
 
   const [form, setForm] = useState({
     offer_id: '',
+    invoice_number: '',
     mobile_number: '',
-    identifier_type: 'PLATE' as IdentifierType,
     emirate: '',
     plate_category: '',
     plate_number: '',
-    car_make: 'BMW',
-    car_model: '',
   })
 
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -75,73 +61,59 @@ export default function CreateCouponPage() {
 
   async function loadData() {
     setLoading(true)
-
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
 
     const [{ data: profileData }, { data: offersData }, { data: emiratesData }] = await Promise.all([
       supabase.from('profiles').select('*').eq('id', user.id).single(),
-      supabase.from('offers').select('id, title, offer_identifier, valid_days, coupon_code_structure, offer_variables').eq('is_active', true).order('title'),
+      supabase.from('offers').select('id, title, offer_identifier, valid_days').eq('is_active', true).order('title'),
       supabase.from('emirates_config').select('*').eq('is_enabled', true).order('sort_order'),
     ])
 
     if (profileData) setProfile(profileData)
     if (offersData) setOffers(offersData)
     if (emiratesData) setEmirates(emiratesData)
-
     setLoading(false)
   }
 
   function showToast(message: string, type: 'success' | 'error' = 'success') {
     setToast({ message, type })
-    setTimeout(() => setToast(null), 3000)
+    setTimeout(() => setToast(null), 4000)
+  }
+
+  function validateInvoiceNumber(val: string) {
+    return /^[A-Za-z]\d+$/.test(val)
   }
 
   function validateMobile(mobile: string) {
-    const cleaned = mobile.replace(/\s/g, '')
-    return /^5\d{8}$/.test(cleaned)
+    return /^5\d{8}$/.test(mobile.replace(/\s/g, ''))
   }
 
-  function getPlateLastFive() {
-    if (form.identifier_type === 'PLATE') {
-      const combined = `${form.plate_category}${form.plate_number}`
-      return combined.slice(-5).toUpperCase()
-    }
-    return form.mobile_number.slice(-5)
-  }
-
-  function generateCouponCode(offer: Offer, identifierLast5: string) {
-    const advisorCode = profile?.advisor_code || 'ADV'
-    const structure = offer.coupon_code_structure ||
-      `AUTOVERSA_${advisorCode}_${offer.offer_identifier}_${identifierLast5}`
-
-    return structure
-      .replace('[ADVISOR_CODE]', advisorCode)
-      .replace('[OFFER_IDENTIFIER]', offer.offer_identifier)
-      .replace('[PLATE_OR_MOBILE_LAST5]', identifierLast5)
-      .toUpperCase()
+  function buildCouponCode(sequenceNumber: number, invoiceNumber: string, type: 'M' | 'B', plate: string) {
+    const seq = String(sequenceNumber).padStart(3, '0')
+    return `${seq}_${invoiceNumber.toUpperCase()}_AUTOVERSA_${type}_${plate.toUpperCase()}`
   }
 
   function validate() {
     const newErrors: Record<string, string> = {}
-
     if (!form.offer_id) newErrors.offer_id = 'Please select an offer'
+    if (!form.invoice_number) {
+      newErrors.invoice_number = 'Invoice number is required'
+    } else if (!validateInvoiceNumber(form.invoice_number)) {
+      newErrors.invoice_number = 'Must start with a letter followed by numbers only (e.g. A12345)'
+    }
     if (!form.mobile_number) {
       newErrors.mobile_number = 'Mobile number is required'
     } else if (!validateMobile(form.mobile_number)) {
-      newErrors.mobile_number = 'Enter a valid UAE mobile number (05XXXXXXXX)'
+      newErrors.mobile_number = 'Enter a valid UAE mobile (5XXXXXXXX)'
     }
-
-    if (form.identifier_type === 'PLATE') {
-      if (!form.emirate) newErrors.emirate = 'Please select an emirate'
-      if (!form.plate_category) newErrors.plate_category = 'Please select a category'
-      if (!form.plate_number) {
-        newErrors.plate_number = 'Plate number is required'
-      } else if (!/^\d{1,5}$/.test(form.plate_number)) {
-        newErrors.plate_number = 'Plate number must be 1-5 digits'
-      }
+    if (!form.emirate) newErrors.emirate = 'Please select an emirate'
+    if (!form.plate_category) newErrors.plate_category = 'Please select a category'
+    if (!form.plate_number) {
+      newErrors.plate_number = 'Plate number is required'
+    } else if (!/^\d{1,5}$/.test(form.plate_number)) {
+      newErrors.plate_number = 'Plate number must be 1-5 digits'
     }
-
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
   }
@@ -152,114 +124,91 @@ export default function CreateCouponPage() {
 
     setSubmitting(true)
 
-    const issueDate = new Date()
-    const expiryDate = new Date()
-    expiryDate.setDate(expiryDate.getDate() + selectedOffer.valid_days)
+    const { data: seqData, error: seqError } = await supabase
+      .rpc('increment_coupon_sequence', { p_offer_id: selectedOffer.id })
 
-    const issueDateStr = issueDate.toISOString().split('T')[0]
-    const expiryDateStr = expiryDate.toISOString().split('T')[0]
-
-    const mobileLast5 = form.mobile_number.slice(-5)
-    const plateCombined = form.identifier_type === 'PLATE'
-      ? `${form.emirate}-${form.plate_category}-${form.plate_number}`
-      : null
-
-    const plateLast5 = form.identifier_type === 'PLATE'
-      ? `${form.plate_category}${form.plate_number}`.slice(-5).toUpperCase()
-      : null
-
-    const couponsToCreate = []
-
-    if (form.identifier_type === 'PLATE') {
-      // Coupon 1 — plate identifier
-      const plateCode = generateCouponCode(selectedOffer, plateLast5!)
-      couponsToCreate.push({
-        coupon_code: plateCode,
-        coupon_type: 'STANDARD',
-        identifier_type: 'PLATE',
-        plate_number: form.plate_number,
-        plate_category: form.plate_category,
-        plate_region: form.emirate,
-        plate_combined_string: plateCombined,
-        mobile_number: form.mobile_number,
-        car_model: `BMW ${form.car_model}`,
-        offer_id: selectedOffer.id,
-        offer_title: selectedOffer.title,
-        offer_identifier: selectedOffer.offer_identifier,
-        issued_by: profile.id,
-        advisor_name: profile.full_name,
-        advisor_code: profile.advisor_code,
-        issue_date: issueDateStr,
-        expiry_date: expiryDateStr,
-        valid_days: selectedOffer.valid_days,
-        status: 'ACTIVE',
-        redemption_count: 0,
-      })
-
-      // Coupon 2 — mobile identifier (auto-generated for plate customers)
-      const mobileCode = generateCouponCode(selectedOffer, mobileLast5)
-      couponsToCreate.push({
-        coupon_code: mobileCode,
-        coupon_type: 'STANDARD',
-        identifier_type: 'MOBILE',
-        plate_number: null,
-        plate_category: null,
-        plate_region: null,
-        plate_combined_string: null,
-        mobile_number: form.mobile_number,
-        car_model: `BMW ${form.car_model}`,
-        offer_id: selectedOffer.id,
-        offer_title: selectedOffer.title,
-        offer_identifier: selectedOffer.offer_identifier,
-        issued_by: profile.id,
-        advisor_name: profile.full_name,
-        advisor_code: profile.advisor_code,
-        issue_date: issueDateStr,
-        expiry_date: expiryDateStr,
-        valid_days: selectedOffer.valid_days,
-        status: 'ACTIVE',
-        redemption_count: 0,
-      })
-    } else {
-      // Mobile only — single coupon
-      const mobileCode = generateCouponCode(selectedOffer, mobileLast5)
-      couponsToCreate.push({
-        coupon_code: mobileCode,
-        coupon_type: 'STANDARD',
-        identifier_type: 'MOBILE',
-        plate_number: null,
-        plate_category: null,
-        plate_region: null,
-        plate_combined_string: null,
-        mobile_number: form.mobile_number,
-        car_model: `BMW ${form.car_model}`,
-        offer_id: selectedOffer.id,
-        offer_title: selectedOffer.title,
-        offer_identifier: selectedOffer.offer_identifier,
-        issued_by: profile.id,
-        advisor_name: profile.full_name,
-        advisor_code: profile.advisor_code,
-        issue_date: issueDateStr,
-        expiry_date: expiryDateStr,
-        valid_days: selectedOffer.valid_days,
-        status: 'ACTIVE',
-        redemption_count: 0,
-      })
-    }
-
-    const { data, error } = await supabase
-      .from('coupons')
-      .insert(couponsToCreate)
-      .select()
-
-    if (error) {
-      showToast('Failed to create coupon. Please try again.', 'error')
+    if (seqError || seqData === null) {
+      showToast('Failed to generate sequence number. Please try again.', 'error')
       setSubmitting(false)
       return
     }
 
-    setSuccess({ coupons: data || [] })
+    const sequenceNumber: number = seqData
+
+    const issueDate = new Date()
+    const expiryDate = new Date()
+    expiryDate.setDate(expiryDate.getDate() + selectedOffer.valid_days)
+    const issueDateStr = issueDate.toISOString().split('T')[0]
+    const expiryDateStr = expiryDate.toISOString().split('T')[0]
+
+    const emirateCode = selectedEmirate?.code || form.emirate
+    const plate = `${emirateCode}${form.plate_category}${form.plate_number}`.toUpperCase()
+
+    const mCouponCode = buildCouponCode(sequenceNumber, form.invoice_number, 'M', plate)
+    const bCouponCode = buildCouponCode(sequenceNumber, form.invoice_number, 'B', plate)
+
+    const baseFields = {
+      offer_id: selectedOffer.id,
+      offer_title: selectedOffer.title,
+      offer_identifier: selectedOffer.offer_identifier,
+      issued_by: profile.id,
+      advisor_name: profile.full_name,
+      advisor_code: profile.advisor_code,
+      invoice_number: form.invoice_number.toUpperCase(),
+      sequence_number: sequenceNumber,
+      plate_number: form.plate_number,
+      plate_category: form.plate_category,
+      plate_region: form.emirate,
+      plate_combined_string: plate,
+      mobile_number: form.mobile_number,
+      issue_date: issueDateStr,
+      expiry_date: expiryDateStr,
+      valid_days: selectedOffer.valid_days,
+      status: 'ACTIVE',
+      redemption_count: 0,
+    }
+
+    // Insert M coupon first to get its ID
+    const { data: mData, error: mError } = await supabase
+      .from('coupons')
+      .insert({ ...baseFields, coupon_code: mCouponCode, coupon_type: 'M', identifier_type: 'PLATE' })
+      .select()
+      .single()
+
+    if (mError || !mData) {
+      showToast('Failed to create M coupon. Please try again.', 'error')
+      setSubmitting(false)
+      return
+    }
+
+    // Insert B coupon with parent_coupon_id pointing to M coupon
+    const { data: bData, error: bError } = await supabase
+      .from('coupons')
+      .insert({ ...baseFields, coupon_code: bCouponCode, coupon_type: 'B', identifier_type: 'PLATE', parent_coupon_id: mData.id })
+      .select()
+      .single()
+
+    if (bError || !bData) {
+      showToast('Failed to create B coupon. Please try again.', 'error')
+      setSubmitting(false)
+      return
+    }
+
+    setSuccess({ coupons: [mData, bData], sequenceNumber })
     setSubmitting(false)
+  }
+
+  function resetForm() {
+    setSuccess(null)
+    setForm({
+      offer_id: '',
+      invoice_number: '',
+      mobile_number: '',
+      emirate: '',
+      plate_category: '',
+      plate_number: '',
+    })
+    setErrors({})
   }
 
   if (loading) {
@@ -282,8 +231,25 @@ export default function CreateCouponPage() {
   }
 
   if (success) {
-    return <SuccessScreen coupons={success.coupons} offer={selectedOffer!} onCreateAnother={() => { setSuccess(null); setForm({ offer_id: '', mobile_number: '', identifier_type: 'PLATE', emirate: '', plate_category: '', plate_number: '', car_make: 'BMW', car_model: '' }) }} />
+    return (
+      <SuccessScreen
+        coupons={success.coupons}
+        offer={selectedOffer!}
+        sequenceNumber={success.sequenceNumber}
+        onCreateAnother={resetForm}
+      />
+    )
   }
+
+  const canPreview = !!(
+    selectedOffer &&
+    form.invoice_number && validateInvoiceNumber(form.invoice_number) &&
+    form.emirate && form.plate_category && form.plate_number
+  )
+
+  const previewPlate = canPreview
+    ? `${selectedEmirate?.code || form.emirate}${form.plate_category}${form.plate_number}`.toUpperCase()
+    : ''
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F7F7F7', paddingTop: '16px' }}>
@@ -351,11 +317,101 @@ export default function CreateCouponPage() {
             {errors.offer_id && <p style={errorStyle}>{errors.offer_id}</p>}
           </div>
 
+          {/* Invoice Number */}
+          <div>
+            <label style={labelStyle}>Invoice / Job Number *</label>
+            <input
+              style={{ ...inputStyle, ...(errors.invoice_number ? errorBorderStyle : {}) }}
+              value={form.invoice_number}
+              onChange={e => {
+                const val = e.target.value.replace(/[^A-Za-z0-9]/g, '')
+                setForm(f => ({ ...f, invoice_number: val }))
+              }}
+              placeholder="e.g. A12345"
+              maxLength={20}
+            />
+            {errors.invoice_number && <p style={errorStyle}>{errors.invoice_number}</p>}
+            <p style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>
+              Must start with one letter followed by numbers only.
+            </p>
+          </div>
+
+          {/* Mercedes Plate */}
+          <div style={{
+            backgroundColor: '#F7F9FF', borderRadius: '12px',
+            padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px',
+            border: '1px solid #E0E8FF',
+          }}>
+            <p style={{ fontSize: '13px', fontWeight: '600', color: '#162860', margin: 0 }}>
+              Mercedes Plate (Customer Vehicle)
+            </p>
+
+            <div>
+              <label style={labelStyle}>Emirate *</label>
+              <select
+                style={{ ...inputStyle, ...(errors.emirate ? errorBorderStyle : {}) }}
+                value={form.emirate}
+                onChange={e => setForm(f => ({ ...f, emirate: e.target.value, plate_category: '' }))}
+              >
+                <option value="">Select emirate...</option>
+                {emirates.map(em => (
+                  <option key={em.id} value={em.name}>{em.name}</option>
+                ))}
+              </select>
+              {errors.emirate && <p style={errorStyle}>{errors.emirate}</p>}
+            </div>
+
+            <div>
+              <label style={labelStyle}>Plate Category *</label>
+              <select
+                style={{ ...inputStyle, ...(errors.plate_category ? errorBorderStyle : {}) }}
+                value={form.plate_category}
+                onChange={e => setForm(f => ({ ...f, plate_category: e.target.value }))}
+                disabled={!form.emirate}
+              >
+                <option value="">{form.emirate ? 'select category...' : 'Select emirate first'}</option>
+                {availableCategories.map(cat => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
+              {errors.plate_category && <p style={errorStyle}>{errors.plate_category}</p>}
+            </div>
+
+            <div>
+              <label style={labelStyle}>Plate Number *</label>
+              <input
+                style={{ ...inputStyle, ...(errors.plate_number ? errorBorderStyle : {}) }}
+                value={form.plate_number}
+                onChange={e => {
+                  const val = e.target.value.replace(/\D/g, '').slice(0, 5)
+                  setForm(f => ({ ...f, plate_number: val }))
+                }}
+                placeholder="Up to 5 digits"
+                maxLength={5}
+                inputMode="numeric"
+              />
+              {errors.plate_number && <p style={errorStyle}>{errors.plate_number}</p>}
+
+              {form.emirate && form.plate_category && form.plate_number && (
+                <div style={{
+                  marginTop: '8px', padding: '8px 12px',
+                  backgroundColor: '#162860', borderRadius: '8px',
+                  display: 'inline-flex', alignItems: 'center', gap: '8px',
+                }}>
+                  <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)' }}>Plate:</span>
+                  <span style={{ fontSize: '13px', fontWeight: '700', color: '#FFFFFF', fontFamily: 'monospace' }}>
+                    {form.emirate} · {form.plate_category} · {form.plate_number}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* Mobile Number */}
           <div>
-            <label style={labelStyle}>Mobile Number *</label>
+            <label style={labelStyle}>Mobile Number (Contact Only) *</label>
             <div style={{
-              display: 'flex', gap: '0px',
+              display: 'flex',
               border: `1.5px solid ${errors.mobile_number ? '#D0021B' : '#E0E0E0'}`,
               borderRadius: '8px', overflow: 'hidden',
               backgroundColor: '#FFFFFF',
@@ -367,7 +423,7 @@ export default function CreateCouponPage() {
                 borderRight: '1.5px solid #E0E0E0',
                 flexShrink: 0,
               }}>
-                <span style={{ fontSize: '18px', lineHeight: 1 }}>🇦🇪</span>
+                <span style={{ fontSize: '18px', lineHeight: '1' }}>🇦🇪</span>
                 <span style={{ fontSize: '14px', fontWeight: '600', color: '#1A1A1A' }}>+971</span>
               </div>
               <input
@@ -379,7 +435,7 @@ export default function CreateCouponPage() {
                 }}
                 value={form.mobile_number}
                 onChange={e => {
-                  const val = e.target.value.replace(/\D/g, '').slice(0, 10)
+                  const val = e.target.value.replace(/\D/g, '').slice(0, 9)
                   setForm(f => ({ ...f, mobile_number: val }))
                 }}
                 placeholder="5XXXXXXXX"
@@ -389,180 +445,42 @@ export default function CreateCouponPage() {
             </div>
             {errors.mobile_number && <p style={errorStyle}>{errors.mobile_number}</p>}
             <p style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>
-              UAE numbers only. Enter 9 digits starting with 5 (e.g. 5XXXXXXXX).
+              Used for WhatsApp sharing only. Not embedded in coupon codes.
             </p>
           </div>
 
-          {/* Identifier Type Toggle */}
-          <div>
-            <label style={labelStyle}>Coupon Identifier</label>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              {(['PLATE', 'MOBILE'] as IdentifierType[]).map(type => (
-                <button
-                  key={type}
-                  onClick={() => setForm(f => ({
-                    ...f,
-                    identifier_type: type,
-                    emirate: '',
-                    plate_category: '',
-                    plate_number: '',
-                  }))}
-                  style={{
-                    flex: 1, padding: '10px',
-                    borderRadius: '10px', border: '1.5px solid',
-                    borderColor: form.identifier_type === type ? '#0074BD' : '#E0E0E0',
-                    backgroundColor: form.identifier_type === type ? '#F0F7FF' : '#FFFFFF',
-                    color: form.identifier_type === type ? '#0074BD' : '#666',
-                    fontSize: '14px', fontWeight: '600', cursor: 'pointer',
-                    transition: 'all 0.15s',
-                  }}
-                >
-                  {type === 'PLATE' ? '🚗 Plate Number' : '📱 Mobile Only'}
-                </button>
-              ))}
-            </div>
-            {form.identifier_type === 'PLATE' && (
-              <p style={{ fontSize: '12px', color: '#0074BD', marginTop: '6px', fontWeight: '500' }}>
-                Two coupons will be generated — one for the plate, one for the mobile number.
-              </p>
-            )}
-          </div>
-
-          {/* Plate Fields */}
-          {form.identifier_type === 'PLATE' && (
-            <div style={{
-              backgroundColor: '#F7F9FF', borderRadius: '12px',
-              padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px',
-              border: '1px solid #E0E8FF',
-            }}>
-              <p style={{ fontSize: '13px', fontWeight: '600', color: '#162860', margin: 0 }}>
-                Plate Details
-              </p>
-
-              {/* Emirate */}
-              <div>
-                <label style={labelStyle}>Emirate *</label>
-                <select
-                  style={{ ...inputStyle, ...(errors.emirate ? errorBorderStyle : {}) }}
-                  value={form.emirate}
-                  onChange={e => setForm(f => ({ ...f, emirate: e.target.value, plate_category: '' }))}
-                >
-                  <option value="">Select emirate...</option>
-                  {emirates.map(em => (
-                    <option key={em.id} value={em.name}>{em.name}</option>
-                  ))}
-                </select>
-                {errors.emirate && <p style={errorStyle}>{errors.emirate}</p>}
-              </div>
-
-              {/* Category */}
-              <div>
-                <label style={labelStyle}>Plate Category *</label>
-                <select
-                  style={{ ...inputStyle, ...(errors.plate_category ? errorBorderStyle : {}) }}
-                  value={form.plate_category}
-                  onChange={e => setForm(f => ({ ...f, plate_category: e.target.value }))}
-                  disabled={!form.emirate}
-                >
-                  <option value="">{form.emirate ? 'Select category...' : 'Select emirate first'}</option>
-                  {availableCategories.map(cat => (
-                    <option key={cat} value={cat}>{cat}</option>
-                  ))}
-                </select>
-                {errors.plate_category && <p style={errorStyle}>{errors.plate_category}</p>}
-              </div>
-
-              {/* Plate Number */}
-              <div>
-                <label style={labelStyle}>Plate Number *</label>
-                <input
-                  style={{ ...inputStyle, ...(errors.plate_number ? errorBorderStyle : {}) }}
-                  value={form.plate_number}
-                  onChange={e => {
-                    const val = e.target.value.replace(/\D/g, '').slice(0, 5)
-                    setForm(f => ({ ...f, plate_number: val }))
-                  }}
-                  placeholder="Up to 5 digits"
-                  maxLength={5}
-                  inputMode="numeric"
-                />
-                {errors.plate_number && <p style={errorStyle}>{errors.plate_number}</p>}
-
-                {form.emirate && form.plate_category && form.plate_number && (
-                  <div style={{
-                    marginTop: '8px', padding: '8px 12px',
-                    backgroundColor: '#162860', borderRadius: '8px',
-                    display: 'inline-flex', alignItems: 'center', gap: '8px',
-                  }}>
-                    <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)' }}>Plate preview:</span>
-                    <span style={{ fontSize: '13px', fontWeight: '700', color: '#FFFFFF', fontFamily: 'monospace' }}>
-                      {form.emirate} · {form.plate_category} · {form.plate_number}
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Vehicle */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-            <p style={{ fontSize: '13px', fontWeight: '600', color: '#162860', margin: 0 }}>
-              Vehicle Details
-            </p>
-
-            {/* Make — fixed BMW */}
-            <div>
-              <label style={labelStyle}>Make</label>
-              <div style={{
-                padding: '10px 12px', backgroundColor: '#F7F7F7',
-                border: '1.5px solid #E0E0E0', borderRadius: '8px',
-                fontSize: '14px', color: '#666', fontWeight: '600',
-              }}>
-                BMW
-              </div>
-            </div>
-
-            {/* Model */}
-            <div>
-              <label style={labelStyle}>Model *</label>
-              <select
-                style={inputStyle}
-                value={form.car_model}
-                onChange={e => setForm(f => ({ ...f, car_model: e.target.value }))}
-              >
-                <option value="">Select model (optional)</option>
-                {BMW_MODELS.map(m => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Coupon Code Preview */}
-          {selectedOffer && form.mobile_number.length === 10 && validateMobile(form.mobile_number) && (
+          {/* Code Preview */}
+          {canPreview && (
             <div style={{
               backgroundColor: '#F0F7FF', borderRadius: '12px',
               padding: '16px', border: '1px solid #C7DCFF',
             }}>
-              <p style={{ fontSize: '12px', color: '#666', margin: '0 0 6px', fontWeight: '500' }}>
-                {form.identifier_type === 'PLATE' && form.plate_number
-                  ? 'Coupon codes that will be generated:'
-                  : 'Coupon code that will be generated:'}
+              <p style={{ fontSize: '12px', color: '#666', margin: '0 0 10px', fontWeight: '600' }}>
+                Coupon codes that will be generated:
               </p>
-              {form.identifier_type === 'PLATE' && form.plate_category && form.plate_number ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <code style={{ fontSize: '13px', fontWeight: '700', color: '#162860', wordBreak: 'break-all' }}>
-                    {generateCouponCode(selectedOffer, `${form.plate_category}${form.plate_number}`.slice(-5).toUpperCase())}
-                  </code>
-                  <code style={{ fontSize: '13px', fontWeight: '700', color: '#0074BD', wordBreak: 'break-all' }}>
-                    {generateCouponCode(selectedOffer, form.mobile_number.slice(-5))}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{
+                    fontSize: '10px', fontWeight: '700', padding: '2px 8px',
+                    backgroundColor: '#162860', color: '#FFFFFF', borderRadius: '4px', flexShrink: 0,
+                  }}>M</span>
+                  <code style={{ fontSize: '12px', fontWeight: '700', color: '#162860', wordBreak: 'break-all' }}>
+                    ???_{form.invoice_number.toUpperCase()}_AUTOVERSA_M_{previewPlate}
                   </code>
                 </div>
-              ) : (
-                <code style={{ fontSize: '13px', fontWeight: '700', color: '#162860', wordBreak: 'break-all' }}>
-                  {generateCouponCode(selectedOffer, form.mobile_number.slice(-5))}
-                </code>
-              )}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{
+                    fontSize: '10px', fontWeight: '700', padding: '2px 8px',
+                    backgroundColor: '#0074BD', color: '#FFFFFF', borderRadius: '4px', flexShrink: 0,
+                  }}>B</span>
+                  <code style={{ fontSize: '12px', fontWeight: '700', color: '#0074BD', wordBreak: 'break-all' }}>
+                    ???_{form.invoice_number.toUpperCase()}_AUTOVERSA_B_{previewPlate}
+                  </code>
+                </div>
+              </div>
+              <p style={{ fontSize: '11px', color: '#888', margin: '10px 0 0' }}>
+                Sequence number (???) assigned on submission.
+              </p>
             </div>
           )}
 
@@ -579,11 +497,7 @@ export default function CreateCouponPage() {
               marginTop: '4px',
             }}
           >
-            {submitting
-              ? 'Creating...'
-              : form.identifier_type === 'PLATE'
-                ? 'Generate 2 Coupons'
-                : 'Generate Coupon'}
+            {submitting ? 'Generating coupons...' : 'Generate 2 Coupons (M + B)'}
           </button>
 
         </div>
@@ -592,19 +506,90 @@ export default function CreateCouponPage() {
   )
 }
 
-function SuccessScreen({ coupons, offer, onCreateAnother }: {
+function SuccessScreen({ coupons, offer, sequenceNumber, onCreateAnother }: {
   coupons: any[]
   offer: Offer
+  sequenceNumber: number
   onCreateAnother: () => void
 }) {
   const router = useRouter()
+  const supabase = createClient()
+  const [downloading, setDownloading] = useState<Record<string, boolean>>({})
+
+  async function downloadCouponJPG(coupon: any) {
+    setDownloading(d => ({ ...d, [coupon.id]: true }))
+    try {
+      const { data: template } = await supabase
+        .from('templates')
+        .select('*, template_variable_positions(*)')
+        .eq('offer_id', coupon.offer_id)
+        .eq('is_active', true)
+        .single()
+
+      if (!template || !template.file_url) {
+        alert('No template configured for this offer. Ask an admin to set up the coupon template.')
+        setDownloading(d => ({ ...d, [coupon.id]: false }))
+        return
+      }
+
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.src = template.file_url
+
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        canvas.width = template.image_width || img.naturalWidth
+        canvas.height = template.image_height || img.naturalHeight
+        const ctx = canvas.getContext('2d')!
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+
+        const VARIABLE_VALUES: Record<string, string> = {
+          coupon_code: coupon.coupon_code,
+          expiry_date: coupon.expiry_date,
+          advisor_name: coupon.advisor_name,
+          offer_title: coupon.offer_title,
+          plate_number: coupon.plate_combined_string || '',
+          mobile_number: coupon.mobile_number ? `+971${coupon.mobile_number}` : '',
+        }
+
+        const positions: any[] = template.template_variable_positions || []
+        positions.forEach((pos: any) => {
+          const key = pos.variable_key.toLowerCase()
+          const value = VARIABLE_VALUES[key] || ''
+          if (!value) return
+          const x = (pos.x_coordinate / 100) * canvas.width
+          const y = (pos.y_coordinate / 100) * canvas.height
+          ctx.font = `${pos.font_weight || 'normal'} ${pos.font_size || 24}px ${template.font_family || 'Arial'}`
+          ctx.fillStyle = pos.font_color || template.text_color || '#000000'
+          ctx.fillText(value, x, y)
+        })
+
+        const link = document.createElement('a')
+        link.download = `${coupon.coupon_code}.jpg`
+        link.href = canvas.toDataURL('image/jpeg', 0.95)
+        link.click()
+        setDownloading(d => ({ ...d, [coupon.id]: false }))
+      }
+
+      img.onerror = () => {
+        alert('Failed to load template image.')
+        setDownloading(d => ({ ...d, [coupon.id]: false }))
+      }
+    } catch {
+      alert('Download failed. Please try again.')
+      setDownloading(d => ({ ...d, [coupon.id]: false }))
+    }
+  }
 
   function handleWhatsApp(coupon: any) {
     const message = encodeURIComponent(
-      `Hi! Here is your AutoVersa coupon 🎉\n\nCoupon Code: ${coupon.coupon_code}\nOffer: ${coupon.offer_title}\nExpiry: ${coupon.expiry_date}\n\nPlease present this code at the service centre.`
+      `Hi! Here is your AutoVersa coupon\n\nCoupon Code: ${coupon.coupon_code}\nOffer: ${coupon.offer_title}\nExpiry: ${coupon.expiry_date}\n\nPlease present this code at the service centre.`
     )
-    window.open(`https://wa.me/?text=${message}`, '_blank')
+    window.open(`https://wa.me/971${coupon.mobile_number}?text=${message}`, '_blank')
   }
+
+  const mCoupon = coupons.find(c => c.coupon_type === 'M')
+  const bCoupon = coupons.find(c => c.coupon_type === 'B')
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F7F7F7', paddingTop: '16px' }}>
@@ -625,92 +610,97 @@ function SuccessScreen({ coupons, offer, onCreateAnother }: {
         }}>
           <div style={{ fontSize: '48px', marginBottom: '12px' }}>✅</div>
           <h1 style={{ fontSize: '22px', fontWeight: '700', color: '#1A1A1A', margin: '0 0 8px' }}>
-            {coupons.length === 2 ? '2 Coupons Created!' : 'Coupon Created!'}
+            2 Coupons Created!
           </h1>
-          <p style={{ color: '#666', fontSize: '14px', margin: 0 }}>
-            For offer: <strong>{offer.title}</strong>
+          <p style={{ color: '#666', fontSize: '14px', margin: '0 0 4px' }}>
+            Offer: <strong>{offer?.title}</strong>
+          </p>
+          <p style={{ color: '#888', fontSize: '13px', margin: 0, fontFamily: 'monospace' }}>
+            Sequence #{String(sequenceNumber).padStart(3, '0')}
           </p>
         </div>
 
-        {coupons.map((coupon, i) => (
-          <div key={coupon.id} style={{
+        {mCoupon && (
+          <div style={{
             backgroundColor: '#FFFFFF', borderRadius: '16px',
             padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
-            marginBottom: '12px',
-            borderLeft: `4px solid ${coupon.identifier_type === 'PLATE' ? '#162860' : '#0074BD'}`,
+            marginBottom: '12px', borderLeft: '4px solid #162860',
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
               <div>
-                <p style={{ fontSize: '12px', color: '#666', margin: '0 0 4px' }}>
-                  {coupon.identifier_type === 'PLATE' ? '🚗 Plate Coupon' : '📱 Mobile Coupon'}
-                </p>
-                <p style={{ fontSize: '18px', fontWeight: '800', color: '#162860', margin: 0, fontFamily: 'monospace', wordBreak: 'break-all' }}>
-                  {coupon.coupon_code}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: '700', padding: '3px 10px', backgroundColor: '#162860', color: '#FFFFFF', borderRadius: '4px' }}>M — Mercedes</span>
+                  <span style={{ fontSize: '12px', color: '#666' }}>Single-use · Tied to plate</span>
+                </div>
+                <p style={{ fontSize: '16px', fontWeight: '800', color: '#162860', margin: 0, fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                  {mCoupon.coupon_code}
                 </p>
               </div>
-              <span style={{
-                fontSize: '11px', fontWeight: '600', padding: '4px 10px',
-                borderRadius: '100px', backgroundColor: '#dcfce7', color: '#16a34a',
-              }}>
-                ACTIVE
-              </span>
+              <span style={{ fontSize: '11px', fontWeight: '600', padding: '4px 10px', borderRadius: '100px', backgroundColor: '#dcfce7', color: '#16a34a', flexShrink: 0 }}>ACTIVE</span>
             </div>
-
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
-              <div style={{ backgroundColor: '#F7F7F7', borderRadius: '8px', padding: '10px' }}>
-                <p style={{ fontSize: '11px', color: '#888', margin: '0 0 2px' }}>Issue Date</p>
-                <p style={{ fontSize: '13px', fontWeight: '600', color: '#1A1A1A', margin: 0 }}>{coupon.issue_date}</p>
-              </div>
-              <div style={{ backgroundColor: '#F7F7F7', borderRadius: '8px', padding: '10px' }}>
-                <p style={{ fontSize: '11px', color: '#888', margin: '0 0 2px' }}>Expiry Date</p>
-                <p style={{ fontSize: '13px', fontWeight: '600', color: '#D0021B', margin: 0 }}>{coupon.expiry_date}</p>
-              </div>
-              <div style={{ backgroundColor: '#F7F7F7', borderRadius: '8px', padding: '10px' }}>
-                <p style={{ fontSize: '11px', color: '#888', margin: '0 0 2px' }}>Vehicle</p>
-                <p style={{ fontSize: '13px', fontWeight: '600', color: '#1A1A1A', margin: 0 }}>{coupon.car_model}</p>
-              </div>
-              <div style={{ backgroundColor: '#F7F7F7', borderRadius: '8px', padding: '10px' }}>
-                <p style={{ fontSize: '11px', color: '#888', margin: '0 0 2px' }}>Valid Days</p>
-                <p style={{ fontSize: '13px', fontWeight: '600', color: '#1A1A1A', margin: 0 }}>{coupon.valid_days} days</p>
-              </div>
+              <div style={infoBoxStyle}><p style={infoLabelStyle}>Issue Date</p><p style={infoValueStyle}>{mCoupon.issue_date}</p></div>
+              <div style={infoBoxStyle}><p style={infoLabelStyle}>Expiry Date</p><p style={{ ...infoValueStyle, color: '#D0021B' }}>{mCoupon.expiry_date}</p></div>
+              <div style={infoBoxStyle}><p style={infoLabelStyle}>Plate</p><p style={{ ...infoValueStyle, fontFamily: 'monospace' }}>{mCoupon.plate_combined_string}</p></div>
+              <div style={infoBoxStyle}><p style={infoLabelStyle}>Valid Days</p><p style={infoValueStyle}>{mCoupon.valid_days} days</p></div>
             </div>
-
-            <button
-              onClick={() => handleWhatsApp(coupon)}
-              style={{
-                width: '100%', padding: '12px',
-                backgroundColor: '#25D366', color: '#FFFFFF',
-                border: 'none', borderRadius: '10px',
-                fontSize: '14px', fontWeight: '600', cursor: 'pointer',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-              }}
-            >
-              <span>📲</span> Share on WhatsApp
-            </button>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button onClick={() => downloadCouponJPG(mCoupon)} disabled={downloading[mCoupon.id]}
+                style={{ flex: 1, padding: '12px', backgroundColor: downloading[mCoupon.id] ? '#93C5E8' : '#162860', color: '#FFFFFF', border: 'none', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: downloading[mCoupon.id] ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                {downloading[mCoupon.id] ? '⏳ Generating...' : '⬇️ Download JPG'}
+              </button>
+              <button onClick={() => handleWhatsApp(mCoupon)}
+                style={{ flex: 1, padding: '12px', backgroundColor: '#25D366', color: '#FFFFFF', border: 'none', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                📲 WhatsApp
+              </button>
+            </div>
           </div>
-        ))}
+        )}
+
+        {bCoupon && (
+          <div style={{
+            backgroundColor: '#FFFFFF', borderRadius: '16px',
+            padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+            marginBottom: '12px', borderLeft: '4px solid #0074BD',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: '700', padding: '3px 10px', backgroundColor: '#0074BD', color: '#FFFFFF', borderRadius: '4px' }}>B — BMW Referral</span>
+                  <span style={{ fontSize: '12px', color: '#666' }}>Multi-use · Per-plate limit</span>
+                </div>
+                <p style={{ fontSize: '16px', fontWeight: '800', color: '#0074BD', margin: 0, fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                  {bCoupon.coupon_code}
+                </p>
+              </div>
+              <span style={{ fontSize: '11px', fontWeight: '600', padding: '4px 10px', borderRadius: '100px', backgroundColor: '#dcfce7', color: '#16a34a', flexShrink: 0 }}>ACTIVE</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
+              <div style={infoBoxStyle}><p style={infoLabelStyle}>Issue Date</p><p style={infoValueStyle}>{bCoupon.issue_date}</p></div>
+              <div style={infoBoxStyle}><p style={infoLabelStyle}>Expiry Date</p><p style={{ ...infoValueStyle, color: '#D0021B' }}>{bCoupon.expiry_date}</p></div>
+              <div style={infoBoxStyle}><p style={infoLabelStyle}>Ref. Plate</p><p style={{ ...infoValueStyle, fontFamily: 'monospace' }}>{bCoupon.plate_combined_string}</p></div>
+              <div style={infoBoxStyle}><p style={infoLabelStyle}>Valid Days</p><p style={infoValueStyle}>{bCoupon.valid_days} days</p></div>
+            </div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button onClick={() => downloadCouponJPG(bCoupon)} disabled={downloading[bCoupon.id]}
+                style={{ flex: 1, padding: '12px', backgroundColor: downloading[bCoupon.id] ? '#93C5E8' : '#0074BD', color: '#FFFFFF', border: 'none', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: downloading[bCoupon.id] ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                {downloading[bCoupon.id] ? '⏳ Generating...' : '⬇️ Download JPG'}
+              </button>
+              <button onClick={() => handleWhatsApp(bCoupon)}
+                style={{ flex: 1, padding: '12px', backgroundColor: '#25D366', color: '#FFFFFF', border: 'none', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                📲 WhatsApp
+              </button>
+            </div>
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
-          <button
-            onClick={onCreateAnother}
-            style={{
-              flex: 1, padding: '12px',
-              backgroundColor: '#0074BD', color: '#FFFFFF',
-              border: 'none', borderRadius: '10px',
-              fontSize: '14px', fontWeight: '600', cursor: 'pointer',
-            }}
-          >
+          <button onClick={onCreateAnother}
+            style={{ flex: 1, padding: '12px', backgroundColor: '#0074BD', color: '#FFFFFF', border: 'none', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>
             Create Another
           </button>
-          <button
-            onClick={() => router.push('/coupons')}
-            style={{
-              flex: 1, padding: '12px',
-              backgroundColor: '#F0F0F0', color: '#444',
-              border: 'none', borderRadius: '10px',
-              fontSize: '14px', fontWeight: '600', cursor: 'pointer',
-            }}
-          >
+          <button onClick={() => router.push('/coupons')}
+            style={{ flex: 1, padding: '12px', backgroundColor: '#F0F0F0', color: '#444', border: 'none', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>
             View All Coupons
           </button>
         </div>
@@ -720,23 +710,18 @@ function SuccessScreen({ coupons, offer, onCreateAnother }: {
 }
 
 const labelStyle: React.CSSProperties = {
-  display: 'block', fontSize: '13px', fontWeight: '600',
-  color: '#1A1A1A', marginBottom: '6px',
+  display: 'block', fontSize: '13px', fontWeight: '600', color: '#1A1A1A', marginBottom: '6px',
 }
-
 const inputStyle: React.CSSProperties = {
   width: '100%', padding: '10px 12px', fontSize: '14px',
   border: '1.5px solid #E0E0E0', borderRadius: '8px', outline: 'none',
   backgroundColor: '#FFFFFF', color: '#1A1A1A',
   boxSizing: 'border-box', fontFamily: 'inherit',
 }
+const errorBorderStyle: React.CSSProperties = { borderColor: '#D0021B' }
+const errorStyle: React.CSSProperties = { fontSize: '12px', color: '#D0021B', marginTop: '4px' }
+const infoBoxStyle: React.CSSProperties = { backgroundColor: '#F7F7F7', borderRadius: '8px', padding: '10px' }
+const infoLabelStyle: React.CSSProperties = { fontSize: '11px', color: '#888', margin: '0 0 2px' }
+const infoValueStyle: React.CSSProperties = { fontSize: '13px', fontWeight: '600', color: '#1A1A1A', margin: 0 }
 
-const errorBorderStyle: React.CSSProperties = {
-  borderColor: '#D0021B',
-}
-
-const errorStyle: React.CSSProperties = {
-  fontSize: '12px', color: '#D0021B', marginTop: '4px',
-}
 export const dynamic = 'force-dynamic'
-
