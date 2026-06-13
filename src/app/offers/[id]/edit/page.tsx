@@ -1,11 +1,13 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams } from 'next/navigation'
+import { useRouter, useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import OfferForm from '@/components/offers/OfferForm'
+import { loadPermissionsForRole, checkPermission } from '@/lib/permissions'
 
 export default function EditOfferPage() {
+    const router = useRouter()
     const params = useParams()
     const supabase = createClient()
     const [offer, setOffer] = useState<any>(null)
@@ -13,6 +15,29 @@ export default function EditOfferPage() {
 
     useEffect(() => {
         async function loadOffer() {
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!user) { router.push('/login'); return }
+
+            const { data: profileData } = await supabase
+                .from('profiles').select('user_role, is_active').eq('id', user.id).single()
+
+            if (!profileData) {
+                router.push('/login')
+                return
+            }
+
+            if (profileData.is_active === false) {
+                await supabase.auth.signOut()
+                router.push('/login')
+                return
+            }
+
+            const perms = await loadPermissionsForRole(profileData.user_role)
+            if (!checkPermission(perms, profileData.user_role, 'page:offers', 'view')) {
+                router.push('/dashboard')
+                return
+            }
+
             const { data } = await supabase
                 .from('offers')
                 .select('*')

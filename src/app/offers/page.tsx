@@ -5,13 +5,18 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/layout/Navbar'
 import Breadcrumb from '@/components/layout/Breadcrumb'
+import { loadPermissionsForRole, checkPermission } from '@/lib/permissions'
+
 
 interface Offer {
   id: string
   title: string
   description: string | null
   offer_identifier: string
-  valid_days: number
+  valid_days: number | null
+  b_valid_days: number | null
+  m_redemption_end_date: string | null
+  b_redemption_end_date: string | null
   commission_amount: number | null
   is_active: boolean
   coupon_code_structure: string | null
@@ -34,6 +39,29 @@ export default function OffersPage() {
 
   async function loadOffers() {
     setLoading(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { router.push('/login'); return }
+
+    const { data: profileData } = await supabase
+      .from('profiles').select('user_role, is_active').eq('id', user.id).single()
+
+    if (!profileData) {
+      router.push('/login')
+      return
+    }
+
+    if (profileData.is_active === false) {
+      await supabase.auth.signOut()
+      router.push('/login')
+      return
+    }
+
+    const perms = await loadPermissionsForRole(profileData.user_role)
+    if (!checkPermission(perms, profileData.user_role, 'page:offers', 'view')) {
+      router.push('/dashboard')
+      return
+    }
+
     const { data } = await supabase
       .from('offers')
       .select('*')
@@ -119,7 +147,7 @@ export default function OffersPage() {
             padding: '12px 24px', backgroundColor: '#F7F7F7',
             borderBottom: '1px solid #EEEEEE',
           }}>
-            {['Title', 'Identifier', 'Valid Days', 'Commission', 'Visited', 'Status', 'Actions'].map(h => (
+            {['Title', 'Identifier', 'Redemption Window', 'Commission', 'Visited', 'Status', 'Actions'].map(h => (
               <span key={h} style={{
                 fontSize: '12px', fontWeight: '600', color: '#666666',
                 textTransform: 'uppercase', letterSpacing: '0.5px',
@@ -177,9 +205,24 @@ export default function OffersPage() {
                 </span>
 
                 {/* Valid Days */}
-                <span style={{ fontSize: '13px', color: '#444' }}>
-                  {offer.valid_days} days
-                </span>
+                <div>
+                  <p style={{ fontSize: '12px', color: '#888', margin: '0 0 2px' }}>Loyalty</p>
+                  <span style={{ fontSize: '13px', color: '#444' }}>
+                    {offer.valid_days
+                      ? `${offer.valid_days} days`
+                      : offer.m_redemption_end_date
+                        ? `Until ${new Date(offer.m_redemption_end_date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}`
+                        : '—'}
+                  </span>
+                  <p style={{ fontSize: '12px', color: '#888', margin: '4px 0 2px' }}>Referral</p>
+                  <span style={{ fontSize: '13px', color: '#444' }}>
+                    {offer.b_valid_days
+                      ? `${offer.b_valid_days} days`
+                      : offer.b_redemption_end_date
+                        ? `Until ${new Date(offer.b_redemption_end_date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}`
+                        : '—'}
+                  </span>
+                </div>
 
                 {/* Commission */}
                 <span style={{ fontSize: '13px', color: '#444' }}>

@@ -1,9 +1,12 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/layout/Navbar'
 import Breadcrumb from '@/components/layout/Breadcrumb'
+import { loadPermissionsForRole, checkPermission } from '@/lib/permissions'
+
 
 interface VariableConfig {
     id: string
@@ -25,8 +28,10 @@ interface EmirateConfig {
 }
 
 export default function AdminSettingsPage() {
+    const router = useRouter()
     const supabase = createClient()
 
+    const [pageLoading, setPageLoading] = useState(true)
     const [variables, setVariables] = useState<VariableConfig[]>([])
     const [emirates, setEmirates] = useState<EmirateConfig[]>([])
     const [loadingVars, setLoadingVars] = useState(true)
@@ -41,9 +46,36 @@ export default function AdminSettingsPage() {
     const [editingCategories, setEditingCategories] = useState('')
 
     useEffect(() => {
-        loadVariables()
-        loadEmirates()
+        init()
     }, [])
+
+    async function init() {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) { router.push('/login'); return }
+
+        const { data: profileData } = await supabase
+            .from('profiles').select('user_role, is_active').eq('id', user.id).single()
+
+        if (!profileData) {
+            router.push('/login')
+            return
+        }
+
+        if (profileData.is_active === false) {
+            await supabase.auth.signOut()
+            router.push('/login')
+            return
+        }
+
+        const perms = await loadPermissionsForRole(profileData.user_role)
+        if (!checkPermission(perms, profileData.user_role, 'page:admin', 'view')) {
+            router.push('/dashboard')
+            return
+        }
+
+        await Promise.all([loadVariables(), loadEmirates()])
+        setPageLoading(false)
+    }
 
     async function loadVariables() {
         setLoadingVars(true)
@@ -158,6 +190,22 @@ export default function AdminSettingsPage() {
             setEditingEmirateId(null)
             loadEmirates()
         }
+    }
+
+    if (pageLoading) {
+        return (
+            <div style={{ minHeight: '100vh', backgroundColor: '#F7F7F7', paddingTop: '16px' }}>
+                <Navbar />
+                <main style={{ padding: '0 32px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '32px' }}>
+                        {Array.from({ length: 5 }).map((_, i) => (
+                            <div key={i} style={{ height: '56px', backgroundColor: '#E0E0E0', borderRadius: '10px', animation: 'pulse 1.5s ease-in-out infinite' }} />
+                        ))}
+                    </div>
+                </main>
+                <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }`}</style>
+            </div>
+        )
     }
 
     return (
@@ -286,7 +334,7 @@ export default function AdminSettingsPage() {
                                     opacity: emirate.is_enabled ? 1 : 0.5,
                                     transition: 'opacity 0.2s',
                                 }}
-                            >
+                              >
                                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px' }}>
 
                                     {/* Toggle */}
@@ -329,7 +377,12 @@ export default function AdminSettingsPage() {
                                             <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                                                 <input
                                                     value={editingCategories}
-                                                    onChange={e => setEditingCategories(e.target.value)}
+                                                    onChange={e => {
+                                                        let val = e.target.value.replace(/[<>]/g, '');
+                                                        if (val.length > 100) val = val.slice(0, 100);
+                                                        setEditingCategories(val);
+                                                    }}
+                                                    onBlur={() => setEditingCategories(editingCategories.trim())}
                                                     style={{
                                                         flex: 1, minWidth: '200px', padding: '7px 10px',
                                                         fontSize: '13px', fontFamily: 'monospace',
@@ -443,7 +496,11 @@ export default function AdminSettingsPage() {
                                 <input
                                     style={inputStyle}
                                     value={newVar.key}
-                                    onChange={e => setNewVar(v => ({ ...v, key: e.target.value.toUpperCase().replace(/\s+/g, '_') }))}
+                                    onChange={e => {
+                                        let val = e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '');
+                                        if (val.length > 100) val = val.slice(0, 100);
+                                        setNewVar(v => ({ ...v, key: val }));
+                                    }}
                                     placeholder="e.g. SERVICE_TYPE"
                                 />
                                 <p style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>
@@ -455,7 +512,12 @@ export default function AdminSettingsPage() {
                                 <input
                                     style={inputStyle}
                                     value={newVar.label}
-                                    onChange={e => setNewVar(v => ({ ...v, label: e.target.value }))}
+                                    onChange={e => {
+                                        let val = e.target.value.replace(/[<>]/g, '');
+                                        if (val.length > 100) val = val.slice(0, 100);
+                                        setNewVar(v => ({ ...v, label: val }));
+                                    }}
+                                    onBlur={() => setNewVar(v => ({ ...v, label: v.label.trim() }))}
                                     placeholder="e.g. Service Type"
                                 />
                             </div>
@@ -464,7 +526,12 @@ export default function AdminSettingsPage() {
                                 <input
                                     style={inputStyle}
                                     value={newVar.description}
-                                    onChange={e => setNewVar(v => ({ ...v, description: e.target.value }))}
+                                    onChange={e => {
+                                        let val = e.target.value.replace(/[<>]/g, '');
+                                        if (val.length > 500) val = val.slice(0, 500);
+                                        setNewVar(v => ({ ...v, description: val }));
+                                    }}
+                                    onBlur={() => setNewVar(v => ({ ...v, description: v.description.trim() }))}
                                     placeholder="e.g. Type of service offered"
                                 />
                             </div>
@@ -555,7 +622,12 @@ function VariableRow({
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                         <input
                             value={labelValue}
-                            onChange={e => setLabelValue(e.target.value)}
+                            onChange={e => {
+                                let val = e.target.value.replace(/[<>]/g, '');
+                                if (val.length > 100) val = val.slice(0, 100);
+                                setLabelValue(val);
+                            }}
+                            onBlur={() => setLabelValue(labelValue.trim())}
                             style={{ ...inputStyle, padding: '6px 10px', fontSize: '13px', flex: 1 }}
                             autoFocus
                         />
@@ -635,4 +707,3 @@ const inputStyle: React.CSSProperties = {
     boxSizing: 'border-box', fontFamily: 'inherit',
 }
 export const dynamic = 'force-dynamic'
-
