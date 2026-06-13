@@ -1011,7 +1011,7 @@ export default function DashboardPage() {
                       const val = e.target.value
                       setSelectedAdvisorId(val)
                       setAdminPipelineSearch('')
-                      setAdminPipelinePages({})
+                      setAdvisorPipelinePages({})
                       loadAdminPipeline(val)
                     }}
                     style={{ padding: '9px 14px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #E0E0E0', borderRadius: '10px', outline: 'none', backgroundColor: '#FFFFFF', color: '#1A1A1A', cursor: 'pointer', minWidth: '220px' }}
