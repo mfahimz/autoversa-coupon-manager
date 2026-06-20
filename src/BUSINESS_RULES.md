@@ -40,6 +40,10 @@ Never implement logic that violates a rule without explicit written approval.
 
 **[NoBulkCreate]:** The Bulk Create Coupons feature has been removed. All coupon creation is done one coupon at a time through the Create Coupon page.
 
+**[PlateOfferCheck]:** A coupon cannot be created for a plate number if there is already an active, redeemed, or expired coupon (status is not CANCELLED) for the same plate number and the same offer.
+
+**[MercedesPlateCheck]:** A Mercedes brand coupon cannot be created for a plate number if there is already an active, redeemed, or expired coupon (status is not CANCELLED) for that plate number where the offer brand is Mercedes-Benz. This restricts plate numbers to a single Mercedes loyalty coupon across all Mercedes offers.
+
 ---
 
 ## Coupon Status Rules

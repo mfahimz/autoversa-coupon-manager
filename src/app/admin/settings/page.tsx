@@ -13,9 +13,9 @@ interface VariableConfig {
     key: string
     label: string
     description: string | null
-    is_enabled: boolean
-    sort_order: number
-    is_system: boolean
+    is_enabled: boolean | null
+    sort_order: number | null
+    is_system: boolean | null
 }
 
 interface EmirateConfig {
@@ -23,8 +23,8 @@ interface EmirateConfig {
     name: string
     code: string
     categories: string[]
-    is_enabled: boolean
-    sort_order: number
+    is_enabled: boolean | null
+    sort_order: number | null
 }
 
 export default function AdminSettingsPage() {
@@ -54,7 +54,10 @@ export default function AdminSettingsPage() {
         if (!user) { router.push('/login'); return }
 
         const { data: profileData } = await supabase
-            .from('profiles').select('user_role, is_active').eq('id', user.id).single()
+            .from('profiles')
+            .select('user_role, is_active')
+            .eq('id', user.id)
+            .single<{ user_role: string; is_active: boolean | null }>()
 
         if (!profileData) {
             router.push('/login')
@@ -334,7 +337,7 @@ export default function AdminSettingsPage() {
                                     opacity: emirate.is_enabled ? 1 : 0.5,
                                     transition: 'opacity 0.2s',
                                 }}
-                              >
+                            >
                                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px' }}>
 
                                     {/* Toggle */}

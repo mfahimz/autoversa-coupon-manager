@@ -13,12 +13,12 @@ import { loadPermissionsForRole, checkPermission, PERMISSIONS_REGISTRY } from '@
 
 interface UserProfile {
   id: string
-  full_name: string
-  email: string
+  full_name: string | null
+  email: string | null
   user_role: string
   advisor_code: string | null
-  is_active: boolean
-  created_at: string
+  is_active: boolean | null
+  created_at: string | null
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -55,7 +55,7 @@ type TabType = 'users' | 'permissions'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function formatDate(dateStr: string): string {
+function formatDate(dateStr: string | null): string {
   if (!dateStr) return '—'
   const d = new Date(dateStr)
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })

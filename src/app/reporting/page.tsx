@@ -13,9 +13,9 @@ import { loadPermissionsForRole, checkPermission } from '@/lib/permissions'
 interface OfferSummary {
   id: string
   title: string
-  is_active: boolean
+  is_active: boolean | null
   coupon_cap: number | null
-  visited_count: number
+  visited_count: number | null
   commission_amount: number | null
   issuance_start_date: string | null
   issuance_end_date: string | null
@@ -31,7 +31,7 @@ interface OfferSummary {
 }
 
 
-function formatDate(dateStr: string): string {
+function formatDate(dateStr: string | null): string {
   if (!dateStr) return '—'
   const d = new Date(dateStr)
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
@@ -104,9 +104,9 @@ export default function ReportingPage() {
         loyalty_issued: loyaltyCoupons.length,
         referral_issued: referralCoupons.length,
         actual_visited: actualVisited,
-        stage1_count: loyaltyCoupons.filter(c => c.stage >= 1).length,
-        stage2_count: loyaltyCoupons.filter(c => c.stage >= 2).length,
-        stage3_count: loyaltyCoupons.filter(c => c.stage >= 3).length,
+        stage1_count: loyaltyCoupons.filter(c => (c.stage || 0) >= 1).length,
+        stage2_count: loyaltyCoupons.filter(c => (c.stage || 0) >= 2).length,
+        stage3_count: loyaltyCoupons.filter(c => (c.stage || 0) >= 3).length,
       }
     })
 

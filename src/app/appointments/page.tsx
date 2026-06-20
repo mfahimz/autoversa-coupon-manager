@@ -15,26 +15,26 @@ import { loadPermissionsForRole, checkPermission } from '@/lib/permissions'
 interface Appointment {
   id: string
   appointment_number: string
-  coupon_id: string
+  coupon_id: string | null
   coupon_code: string
   vehicle_make: string | null
   vehicle_plate: string | null
   vehicle_year: number | null
-  appointment_date: string
-  appointment_time: string
+  appointment_date: string | null
+  appointment_time: string | null
   notes: string | null
   follow_up_note: string | null
   booked_by: string | null
-  wa_confirmation_sent: boolean
+  wa_confirmation_sent: boolean | null
   status: string
-  reschedule_count: number
-  not_reachable_count: number
+  reschedule_count: number | null
+  not_reachable_count: number | null
   offer_id: string | null
   sub_offer_id: string | null
   sub_offer_name: string | null
   redeemed_plate: string | null
   customer_mobile: string | null
-  created_at: string
+  created_at: string | null
 }
 
 interface CouponLookup {
@@ -58,7 +58,7 @@ interface CouponLookup {
 interface SubOffer {
   id: string
   name: string
-  sort_order: number
+  sort_order: number | null
 }
 
 interface EmirateConfig {
@@ -66,8 +66,8 @@ interface EmirateConfig {
   name: string
   code: string
   categories: string[]
-  is_enabled: boolean
-  sort_order: number
+  is_enabled: boolean | null
+  sort_order: number | null
 }
 
 // ─── Status config ────────────────────────────────────────────────────────────
@@ -98,7 +98,7 @@ const inputStyle: React.CSSProperties = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function formatDate(dateStr: string): string {
+function formatDate(dateStr: string | null): string {
   if (!dateStr) return '—'
   const d = new Date(dateStr)
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
@@ -333,7 +333,7 @@ export default function AppointmentsPage() {
     }
 
     if (data.status !== 'ACTIVE') {
-      setCouponError(`This coupon is ${data.status.toLowerCase()} and cannot be used to book an appointment.`)
+      setCouponError(`This coupon is ${(data.status || 'unknown').toLowerCase()} and cannot be used to book an appointment.`)
       setCouponLoading(false)
       return
     }
@@ -585,12 +585,12 @@ export default function AppointmentsPage() {
         return [
           'customer_not_reachable',
           'follow_up_confirmed',
-          ...(appt.reschedule_count < 1 && appt.status !== 'rescheduled' ? ['rescheduled'] : []),
+          ...((appt.reschedule_count || 0) < 1 && appt.status !== 'rescheduled' ? ['rescheduled'] : []),
           'job_card_open',
           'cancelled',
         ]
       case 'customer_not_reachable':
-        return appt.not_reachable_count >= 3
+        return (appt.not_reachable_count || 0) >= 3
           ? []
           : ['customer_not_reachable', 'follow_up_confirmed', 'job_card_open', 'cancelled']
       case 'follow_up_confirmed':
@@ -632,8 +632,8 @@ export default function AppointmentsPage() {
     setStatusUpdating(true)
 
     const newNotReachableCount = newStatus === 'customer_not_reachable'
-      ? selectedAppt.not_reachable_count + 1
-      : selectedAppt.not_reachable_count
+      ? (selectedAppt.not_reachable_count || 0) + 1
+      : (selectedAppt.not_reachable_count || 0)
 
     const autoCancel = newNotReachableCount >= 3
     const subOfferObj = jobCardSubOffers.find(s => s.id === jobCardSubOffer)
@@ -648,7 +648,7 @@ export default function AppointmentsPage() {
     if (newStatus === 'rescheduled') {
       updatePayload.appointment_date = rescheduleDate
       updatePayload.appointment_time = rescheduleTime
-      updatePayload.reschedule_count = selectedAppt.reschedule_count + 1
+      updatePayload.reschedule_count = (selectedAppt.reschedule_count || 0) + 1
     }
 
     if (newStatus === 'job_card_open' && subOfferObj) {
@@ -668,25 +668,29 @@ export default function AppointmentsPage() {
     }
 
     if (newStatus === 'visited') {
-      // Mark the REFERRAL coupon as REDEEMED
-      await supabase
-        .from('coupons')
-        .update({ status: 'REDEEMED' })
-        .eq('id', selectedAppt.coupon_id)
+      if (selectedAppt.coupon_id) {
+        // Mark the REFERRAL coupon as REDEEMED
+        await supabase
+          .from('coupons')
+          .update({ status: 'REDEEMED' })
+          .eq('id', selectedAppt.coupon_id)
 
-      // Advance the paired LOYALTY coupon stage
-      const { error: rpcError, data: rpcResult } = await supabase
-        .rpc('advance_m_coupon_stage', { p_b_coupon_id: selectedAppt.coupon_id })
+        // Advance the paired LOYALTY coupon stage
+        const { error: rpcError, data: rpcResult } = await supabase
+          .rpc('advance_m_coupon_stage', { p_b_coupon_id: selectedAppt.coupon_id })
 
-      if (rpcError) {
-        showToast('Appointment marked visited but stage advance failed — check manually', 'error')
-      } else {
-        const result = rpcResult as any
-        if (result?.success) {
-          showToast(`Visited — loyalty advanced to Stage ${result.new_stage}`)
+        if (rpcError) {
+          showToast('Appointment marked visited but stage advance failed — check manually', 'error')
         } else {
-          showToast('Appointment marked visited')
+          const result = rpcResult as any
+          if (result?.success) {
+            showToast(`Visited — loyalty advanced to Stage ${result.new_stage}`)
+          } else {
+            showToast('Appointment marked visited')
+          }
         }
+      } else {
+        showToast('Appointment marked visited')
       }
 
       if (selectedAppt.offer_id) {
@@ -827,8 +831,8 @@ export default function AppointmentsPage() {
                           <span style={{ display: 'inline-block', fontSize: '11px', fontWeight: '600', padding: '4px 10px', borderRadius: '100px', backgroundColor: cfg.bg, color: cfg.color }}>
                             {cfg.label}
                           </span>
-                          {appt.not_reachable_count > 0 && <span style={{ fontSize: '11px', color: '#D0021B' }}>{appt.not_reachable_count}/3 attempts</span>}
-                          {appt.reschedule_count > 0 && <span style={{ fontSize: '11px', color: '#f59e0b' }}>Rescheduled once</span>}
+                          {(appt.not_reachable_count || 0) > 0 && <span style={{ fontSize: '11px', color: '#D0021B' }}>{appt.not_reachable_count}/3 attempts</span>}
+                          {(appt.reschedule_count || 0) > 0 && <span style={{ fontSize: '11px', color: '#f59e0b' }}>Rescheduled once</span>}
                         </div>
                       </td>
                       <td style={{ padding: '14px 16px' }}>
@@ -1124,7 +1128,7 @@ export default function AppointmentsPage() {
                           <div style={{ width: '16px', height: '16px', borderRadius: '50%', flexShrink: 0, border: `2px solid ${newStatus === s ? cfg.color : '#CCC'}`, backgroundColor: newStatus === s ? cfg.color : 'transparent' }} />
                           <span style={{ fontSize: '14px', fontWeight: '600', color: newStatus === s ? cfg.color : '#1A1A1A' }}>{cfg.label}</span>
                           {s === 'customer_not_reachable' && (
-                            <span style={{ fontSize: '12px', color: '#D0021B', marginLeft: 'auto' }}>{selectedAppt.not_reachable_count + 1}/3</span>
+                            <span style={{ fontSize: '12px', color: '#D0021B', marginLeft: 'auto' }}>{(selectedAppt.not_reachable_count || 0) + 1}/3</span>
                           )}
                         </div>
                       )
@@ -1199,7 +1203,7 @@ export default function AppointmentsPage() {
                       placeholder={newStatus === 'customer_not_reachable' ? 'e.g. Called twice, no answer' : 'e.g. Customer confirmed via WhatsApp'}
                     />
                     {errors.statusNote && <p style={{ fontSize: '12px', color: '#D0021B', marginTop: '4px' }}>{errors.statusNote}</p>}
-                    {newStatus === 'customer_not_reachable' && selectedAppt.not_reachable_count + 1 >= 3 && (
+                    {newStatus === 'customer_not_reachable' && ((selectedAppt.not_reachable_count || 0) + 1) >= 3 && (
                       <p style={{ fontSize: '12px', color: '#D0021B', marginTop: '6px', fontWeight: '600' }}>
                         This is the 3rd attempt — appointment will be automatically cancelled.
                       </p>

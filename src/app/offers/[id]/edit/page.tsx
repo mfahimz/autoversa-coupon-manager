@@ -38,10 +38,16 @@ export default function EditOfferPage() {
                 return
             }
 
+            const id = Array.isArray(params.id) ? params.id[0] : params.id
+            if (!id) {
+                setLoading(false)
+                return
+            }
+
             const { data } = await supabase
                 .from('offers')
                 .select('*')
-                .eq('id', params.id)
+                .eq('id', id)
                 .single()
             if (data) setOffer(data)
             setLoading(false)

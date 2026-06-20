@@ -12,18 +12,18 @@ interface Offer {
   id: string
   title: string
   description: string | null
-  offer_identifier: string
+  offer_identifier: string | null
   valid_days: number | null
   b_valid_days: number | null
   m_redemption_end_date: string | null
   b_redemption_end_date: string | null
   commission_amount: number | null
-  is_active: boolean
+  is_active: boolean | null
   coupon_code_structure: string | null
-  offer_variables: string[] | null
+  offer_variables: string | null
   coupon_cap: number | null
-  visited_count: number
-  created_at: string
+  visited_count: number | null
+  created_at: string | null
   first_batch_target: number | null
 }
 

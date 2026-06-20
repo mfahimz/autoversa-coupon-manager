@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/layout/Navbar'
 import Breadcrumb from '@/components/layout/Breadcrumb'
 import { loadPermissionsForRole, checkPermission, PermissionsMap } from '@/lib/permissions'
+import { maskMobileNumber } from '@/lib/utils'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -20,8 +21,8 @@ interface LoyaltyCustomer {
     plate_numbers: string[]
     car_make: string | null
     car_model: string | null
-    created_at: string
-    updated_at: string
+    created_at: string | null
+    updated_at: string | null
 }
 
 interface ReferralCustomer {
@@ -33,8 +34,8 @@ interface ReferralCustomer {
     plate_numbers: string[]
     car_make: string | null
     car_model: string | null
-    created_at: string
-    updated_at: string
+    created_at: string | null
+    updated_at: string | null
 }
 
 // ─── Shared styles ────────────────────────────────────────────────────────────
@@ -53,7 +54,7 @@ const inputStyle: React.CSSProperties = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function formatDate(dateStr: string): string {
+function formatDate(dateStr: string | null): string {
     if (!dateStr) return '—'
     const d = new Date(dateStr)
     return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
@@ -331,7 +332,7 @@ export default function CustomersPage() {
                                             {customer.full_name || <span style={{ color: '#999', fontStyle: 'italic' }}>—</span>}
                                         </td>
                                         <td style={{ padding: '14px 16px', fontSize: '13px', color: '#1A1A1A', fontFamily: 'monospace' }}>
-                                            +971 {customer.mobile_number}
+                                            {maskMobileNumber(customer.mobile_number)}
                                         </td>
                                         <td style={{ padding: '14px 16px' }}>
                                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>

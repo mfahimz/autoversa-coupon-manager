@@ -13,7 +13,7 @@ import { loadPermissionsForRole, checkPermission } from '@/lib/permissions'
 interface Offer {
   id: string
   title: string
-  offer_identifier: string
+  offer_identifier: string | null
   valid_days: number | null
   b_valid_days: number | null
   b_redemption_end_date: string | null
@@ -31,12 +31,12 @@ interface EmirateConfig {
   name: string
   code: string
   categories: string[]
-  is_enabled: boolean
+  is_enabled: boolean | null
 }
 
 interface Profile {
   id: string
-  full_name: string
+  full_name: string | null
   advisor_code: string | null
   user_role: string
 }
@@ -85,7 +85,6 @@ async function upsertLoyaltyCustomer(
     .maybeSingle()
 
   if (existing) {
-    // Append plate if not already in array
     const plates: string[] = existing.plate_numbers || []
     if (!plates.includes(plate)) {
       await supabase
@@ -97,7 +96,6 @@ async function upsertLoyaltyCustomer(
         .eq('id', existing.id)
     }
   } else {
-    // Generate next customer_id
     const { data: maxRow } = await supabase
       .from('loyalty_customers')
       .select('customer_id')
@@ -245,6 +243,43 @@ export default function CreateCouponPage() {
     if (!selectedOffer || !profile) return
     setSubmitting(true)
 
+    const emirateCode = selectedEmirate?.code || form.emirate
+    const plate = `${emirateCode}${form.plate_category}${form.plate_number}`.toUpperCase()
+
+    const { data: existingCoupons, error: checkError } = await supabase
+      .from('coupons')
+      .select('id, offer_id, status, offers(loyalty_brand)')
+      .eq('plate_combined_string', plate)
+      .neq('status', 'CANCELLED')
+
+    if (checkError) {
+      showToast('Error verifying plate number availability. Please try again.', 'error')
+      setSubmitting(false)
+      return
+    }
+
+    const hasSameOffer = existingCoupons?.some(c => c.offer_id === selectedOffer.id)
+    if (hasSameOffer) {
+      showToast('A coupon for this offer has already been created for this plate number.', 'error')
+      setSubmitting(false)
+      return
+    }
+
+    const isMercedesOffer = selectedOffer.loyalty_brand?.toLowerCase().includes('mercedes')
+    if (isMercedesOffer) {
+      const hasMercedesCoupon = existingCoupons?.some((c: any) => {
+        const brand = Array.isArray(c.offers)
+          ? c.offers[0]?.loyalty_brand
+          : c.offers?.loyalty_brand
+        return brand?.toLowerCase().includes('mercedes')
+      })
+      if (hasMercedesCoupon) {
+        showToast('A Mercedes loyalty coupon has already been created for this plate number.', 'error')
+        setSubmitting(false)
+        return
+      }
+    }
+
     const { data: seqData, error: seqError } = await supabase
       .rpc('increment_coupon_sequence', { p_offer_id: selectedOffer.id })
 
@@ -291,9 +326,6 @@ export default function CreateCouponPage() {
       bValidDays = 90
     }
 
-    const emirateCode = selectedEmirate?.code || form.emirate
-    const plate = `${emirateCode}${form.plate_category}${form.plate_number}`.toUpperCase()
-
     const loyaltyCode = buildCouponCode(sequenceNumber, form.invoice_number, 'LOYALTY', plate)
     const referralCode = buildCouponCode(sequenceNumber, form.invoice_number, 'REFERRAL', plate)
 
@@ -327,7 +359,6 @@ export default function CreateCouponPage() {
       return
     }
 
-    // Auto-create or update loyalty customer profile
     await upsertLoyaltyCustomer(supabase, {
       mobile_number: form.mobile_number,
       plate,
@@ -575,6 +606,45 @@ function resolveVariableValues(coupon: any): Record<string, string> {
   }
 }
 
+// ─── Canvas renderer (shared by copy) ────────────────────────────────────────
+
+function renderCouponToCanvas(coupon: any, template: TemplateData): Promise<HTMLCanvasElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.src = template.file_url
+
+    img.onload = () => {
+      const scale = 2
+      const canvas = document.createElement('canvas')
+      canvas.width = (template.image_width || img.naturalWidth) * scale
+      canvas.height = (template.image_height || img.naturalHeight) * scale
+      const ctx = canvas.getContext('2d')!
+      ctx.scale(scale, scale)
+      ctx.drawImage(img, 0, 0, template.image_width || img.naturalWidth, template.image_height || img.naturalHeight)
+
+      const values = resolveVariableValues(coupon)
+      const positions = template.template_variable_positions || []
+      const baseW = template.image_width || img.naturalWidth
+      const baseH = template.image_height || img.naturalHeight
+
+      positions.forEach(pos => {
+        const value = values[pos.variable_key] || ''
+        if (!value) return
+        const x = (pos.x_coordinate / 100) * baseW
+        const y = (pos.y_coordinate / 100) * baseH
+        ctx.font = `${pos.font_weight || 'normal'} ${pos.font_size || 24}px ${template.font_family || 'Arial'}`
+        ctx.fillStyle = pos.font_color || template.text_color || '#000000'
+        ctx.fillText(value, x, y)
+      })
+
+      resolve(canvas)
+    }
+
+    img.onerror = () => reject(new Error('Failed to load template image'))
+  })
+}
+
 // ─── CSS Coupon Preview ───────────────────────────────────────────────────────
 
 function CouponPreview({ coupon, template }: { coupon: any; template: TemplateData }) {
@@ -583,11 +653,15 @@ function CouponPreview({ coupon, template }: { coupon: any; template: TemplateDa
     ? template.image_width / template.image_height
     : 1.586
 
+  const previewWidth = 560
+  const previewHeight = Math.round(previewWidth / aspectRatio)
+
   return (
     <div style={{
       position: 'relative',
       width: '100%',
-      paddingBottom: `${(1 / aspectRatio) * 100}%`,
+      maxWidth: `${previewWidth}px`,
+      height: `${previewHeight}px`,
       borderRadius: '10px',
       overflow: 'hidden',
       boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
@@ -639,9 +713,12 @@ function SuccessScreen({ coupons, offer, sequenceNumber, onCreateAnother }: {
 }) {
   const router = useRouter()
   const supabase = createClient()
-  const [downloading, setDownloading] = useState<Record<string, boolean>>({})
+  const [copying, setCopying] = useState<Record<string, boolean>>({})
+  const [copied, setCopied] = useState<Record<string, boolean>>({})
   const [templates, setTemplates] = useState<Record<string, TemplateData>>({})
   const [templatesLoaded, setTemplatesLoaded] = useState(false)
+  const [actionedIds, setActionedIds] = useState<Set<string>>(new Set())
+  const [showSuccessDialog, setShowSuccessDialog] = useState(false)
 
   const mCoupon = coupons.find(c => c.coupon_type === 'LOYALTY')
   const bCoupon = coupons.find(c => c.coupon_type === 'REFERRAL')
@@ -650,6 +727,13 @@ function SuccessScreen({ coupons, offer, sequenceNumber, onCreateAnother }: {
     if (!offer?.id) return
     loadTemplates(offer.id)
   }, [offer?.id])
+
+  // Auto-show success dialog once both coupons are actioned
+  useEffect(() => {
+    if (coupons.length === 2 && coupons.every(c => actionedIds.has(c.id))) {
+      setShowSuccessDialog(true)
+    }
+  }, [actionedIds, coupons])
 
   async function loadTemplates(offerId: string) {
     const { data } = await supabase
@@ -667,49 +751,48 @@ function SuccessScreen({ coupons, offer, sequenceNumber, onCreateAnother }: {
     setTemplatesLoaded(true)
   }
 
-  async function downloadCouponJPG(coupon: any) {
+  function markActioned(couponId: string) {
+    setActionedIds(prev => new Set(prev).add(couponId))
+  }
+
+  async function handleCopyImage(coupon: any) {
     const template = templates[coupon.coupon_type]
     if (!template?.file_url) {
       alert('No template configured for this coupon type.')
       return
     }
 
-    setDownloading(d => ({ ...d, [coupon.id]: true }))
+    setCopying(d => ({ ...d, [coupon.id]: true }))
 
-    const img = new Image()
-    img.crossOrigin = 'anonymous'
-    img.src = template.file_url
+    try {
+      const canvas = await renderCouponToCanvas(coupon, template)
 
-    img.onload = () => {
-      const canvas = document.createElement('canvas')
-      canvas.width = template.image_width || img.naturalWidth
-      canvas.height = template.image_height || img.naturalHeight
-      const ctx = canvas.getContext('2d')!
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-
-      const values = resolveVariableValues(coupon)
-      const positions = template.template_variable_positions || []
-
-      positions.forEach(pos => {
-        const value = values[pos.variable_key] || ''
-        if (!value) return
-        const x = (pos.x_coordinate / 100) * canvas.width
-        const y = (pos.y_coordinate / 100) * canvas.height
-        ctx.font = `${pos.font_weight || 'normal'} ${pos.font_size || 24}px ${template.font_family || 'Arial'}`
-        ctx.fillStyle = pos.font_color || template.text_color || '#000000'
-        ctx.fillText(value, x, y)
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob(b => b ? resolve(b) : reject(new Error('Canvas toBlob failed')), 'image/png')
       })
 
-      const link = document.createElement('a')
-      link.download = `${coupon.coupon_code}.jpg`
-      link.href = canvas.toDataURL('image/jpeg', 0.95)
-      link.click()
-      setDownloading(d => ({ ...d, [coupon.id]: false }))
-    }
+      if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+      } else {
+        // Fallback: copy coupon code as text
+        await navigator.clipboard.writeText(coupon.coupon_code)
+      }
 
-    img.onerror = () => {
-      alert('Failed to load template image.')
-      setDownloading(d => ({ ...d, [coupon.id]: false }))
+      setCopied(d => ({ ...d, [coupon.id]: true }))
+      markActioned(coupon.id)
+      setTimeout(() => setCopied(d => ({ ...d, [coupon.id]: false })), 2500)
+    } catch {
+      // Last resort fallback
+      try {
+        await navigator.clipboard.writeText(coupon.coupon_code)
+        setCopied(d => ({ ...d, [coupon.id]: true }))
+        markActioned(coupon.id)
+        setTimeout(() => setCopied(d => ({ ...d, [coupon.id]: false })), 2500)
+      } catch {
+        alert('Copy failed. Please take a screenshot.')
+      }
+    } finally {
+      setCopying(d => ({ ...d, [coupon.id]: false }))
     }
   }
 
@@ -718,23 +801,31 @@ function SuccessScreen({ coupons, offer, sequenceNumber, onCreateAnother }: {
       `Hi! Here is your AutoVersa coupon\n\nCoupon Code: ${coupon.coupon_code}\nOffer: ${coupon.offer_title}\nExpiry: ${formatDate(coupon.expiry_date)}\n\nPlease present this code at the service centre.`
     )
     window.open(`https://wa.me/971${coupon.mobile_number}?text=${message}`, '_blank')
+    markActioned(coupon.id)
   }
 
   function renderCouponCard(coupon: any, accentColor: string, label: string, subtitle: string) {
     const template = templates[coupon.coupon_type]
     const hasTemplate = templatesLoaded && !!template
+    const isActioned = actionedIds.has(coupon.id)
+    const isCopying = copying[coupon.id]
+    const isCopied = copied[coupon.id]
 
     return (
-      <div style={{
+      <div key={coupon.id} style={{
         backgroundColor: '#FFFFFF', borderRadius: '16px',
         padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
-        marginBottom: '12px', borderLeft: `4px solid ${accentColor}`,
+        marginBottom: '12px',
+        border: isActioned ? '2px solid #16a34a' : `2px solid transparent`,
+        borderLeft: isActioned ? '4px solid #16a34a' : `4px solid ${accentColor}`,
+        transition: 'border-color 0.3s ease',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
               <span style={{ fontSize: '11px', fontWeight: '700', padding: '3px 10px', backgroundColor: accentColor, color: '#FFFFFF', borderRadius: '4px' }}>{label}</span>
               <span style={{ fontSize: '12px', color: '#666' }}>{subtitle}</span>
+              {isActioned && <span style={{ fontSize: '11px', fontWeight: '600', color: '#16a34a' }}>✓ Actioned</span>}
             </div>
             <p style={{ fontSize: '15px', fontWeight: '800', color: accentColor, margin: 0, fontFamily: 'monospace', wordBreak: 'break-all' }}>
               {coupon.coupon_code}
@@ -754,17 +845,18 @@ function SuccessScreen({ coupons, offer, sequenceNumber, onCreateAnother }: {
 
         <div style={{ display: 'flex', gap: '8px' }}>
           <button
-            onClick={() => downloadCouponJPG(coupon)}
-            disabled={downloading[coupon.id] || !hasTemplate}
+            onClick={() => handleCopyImage(coupon)}
+            disabled={isCopying || !hasTemplate}
             style={{
               flex: 1, padding: '12px',
-              backgroundColor: downloading[coupon.id] ? '#93C5E8' : !hasTemplate ? '#CCCCCC' : accentColor,
+              backgroundColor: isCopied ? '#16a34a' : isCopying ? '#93C5E8' : !hasTemplate ? '#CCCCCC' : accentColor,
               color: '#FFFFFF', border: 'none', borderRadius: '10px',
               fontSize: '14px', fontWeight: '600',
-              cursor: downloading[coupon.id] || !hasTemplate ? 'not-allowed' : 'pointer',
+              cursor: isCopying || !hasTemplate ? 'not-allowed' : 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+              transition: 'background-color 0.2s ease',
             }}>
-            {downloading[coupon.id] ? 'Generating...' : !hasTemplate ? 'No Template' : 'Download JPG'}
+            {isCopied ? '✓ Copied!' : isCopying ? 'Copying...' : !hasTemplate ? 'No Template' : '📋 Copy Image'}
           </button>
           <button onClick={() => handleWhatsApp(coupon)} style={{
             flex: 1, padding: '12px', backgroundColor: '#25D366', color: '#FFFFFF',
@@ -810,6 +902,35 @@ function SuccessScreen({ coupons, offer, sequenceNumber, onCreateAnother }: {
           </button>
         </div>
       </main>
+
+      {/* Auto-success dialog */}
+      {showSuccessDialog && (
+        <div style={{
+          position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000,
+        }}>
+          <div style={{
+            backgroundColor: '#FFFFFF', borderRadius: '20px', padding: '36px',
+            maxWidth: '360px', width: '90%', textAlign: 'center',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+          }}>
+            <div style={{ fontSize: '52px', marginBottom: '12px' }}>🎉</div>
+            <h2 style={{ fontSize: '20px', fontWeight: '700', color: '#1A1A1A', margin: '0 0 8px' }}>Both Coupons Shared!</h2>
+            <p style={{ color: '#666', fontSize: '14px', margin: '0 0 24px' }}>Both the loyalty and referral coupons have been actioned.</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <button onClick={onCreateAnother} style={{ padding: '12px', backgroundColor: '#0074BD', color: '#FFFFFF', border: 'none', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>
+                Create Another Coupon
+              </button>
+              <button onClick={() => router.push('/coupons')} style={{ padding: '12px', backgroundColor: '#F0F0F0', color: '#444', border: 'none', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>
+                View All Coupons
+              </button>
+              <button onClick={() => setShowSuccessDialog(false)} style={{ padding: '12px', backgroundColor: 'transparent', color: '#888', border: 'none', fontSize: '13px', cursor: 'pointer' }}>
+                Stay on this page
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

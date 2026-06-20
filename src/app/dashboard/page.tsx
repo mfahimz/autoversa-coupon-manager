@@ -6,13 +6,14 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/layout/Navbar'
+import { maskMobileNumber } from '@/lib/utils'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Profile {
   id: string
-  full_name: string
-  email: string
+  full_name: string | null
+  email: string | null
   user_role: string
   advisor_code: string | null
 }
@@ -53,14 +54,14 @@ interface OfferGroup {
 
 interface AdvisorProfile {
   id: string
-  full_name: string
+  full_name: string | null
   advisor_code: string | null
   user_role: string
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function formatDate(dateStr: string): string {
+function formatDate(dateStr: string | null): string {
   if (!dateStr) return '—'
   const d = new Date(dateStr)
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
@@ -651,7 +652,7 @@ export default function DashboardPage() {
                         <p style={{ fontSize: '11px', color: '#888', margin: '2px 0 0', fontFamily: 'monospace' }}>{row.coupon_code}</p>
                       </div>
                       {showAdvisorCol && <span style={{ fontSize: '13px', color: '#444' }}>{row.advisor_name || '—'}</span>}
-                      <span style={{ fontSize: '13px', color: '#444', fontFamily: 'monospace' }}>{row.mobile_number ? '+971 ' + row.mobile_number : '—'}</span>
+                      <span style={{ fontSize: '13px', color: '#444', fontFamily: 'monospace' }}>{maskMobileNumber(row.mobile_number)}</span>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <span style={{ fontSize: '18px', fontWeight: '700', color: '#1A1A1A' }}>{row.bmw_referrals_completed}</span>
                         {row.max_stage > 0 && (
@@ -676,12 +677,15 @@ export default function DashboardPage() {
                         )}
                       </div>
                       <div>
-                        {row.last_notified_at ? (
-                          <>
-                            <p style={{ fontSize: '12px', color: '#444', margin: 0 }}>{formatDate(row.last_notified_at)}</p>
-                            <p style={{ fontSize: '11px', color: '#888', margin: '2px 0 0' }}>{new Date(row.last_notified_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</p>
-                          </>
-                        ) : (
+                        {row.last_notified_at ? (() => {
+                          const val = row.last_notified_at
+                          return (
+                            <>
+                              <p style={{ fontSize: '12px', color: '#444', margin: 0 }}>{formatDate(val)}</p>
+                              <p style={{ fontSize: '11px', color: '#888', margin: '2px 0 0' }}>{new Date(val).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</p>
+                            </>
+                          )
+                        })() : (
                           <span style={{ fontSize: '12px', color: '#888' }}>Never</span>
                         )}
                       </div>
@@ -802,7 +806,7 @@ export default function DashboardPage() {
                         <p style={{ fontSize: '13px', fontWeight: '700', color: '#162860', margin: 0, fontFamily: 'monospace' }}>{row.plate_combined_string || '—'}</p>
                         <p style={{ fontSize: '11px', color: '#888', margin: '2px 0 0', fontFamily: 'monospace' }}>{row.coupon_code}</p>
                       </div>
-                      <span style={{ fontSize: '13px', color: '#444', fontFamily: 'monospace' }}>{row.mobile_number ? '+971 ' + row.mobile_number : '—'}</span>
+                      <span style={{ fontSize: '13px', color: '#444', fontFamily: 'monospace' }}>{maskMobileNumber(row.mobile_number)}</span>
                       <span style={{ fontSize: '18px', fontWeight: '700', color: '#1A1A1A' }}>{row.bmw_referrals_completed}</span>
                       <div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: hasReward ? '4px' : '0' }}>

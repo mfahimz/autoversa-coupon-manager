@@ -18,6 +18,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <AppSplash />
         <TopLoaderWrapper />
         {children}
+        <div style={{ textAlign: 'center', padding: '20px 32px', fontSize: '11px', color: '#AAAAAA' }}>
+          © 2026 Autoversa. Operated by Al Maraghi Motors L.L.C. All Rights Reserved.
+        </div>
       </body>
     </html>
   )

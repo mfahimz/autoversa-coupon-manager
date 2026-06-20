@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import type { Database } from '@/lib/database.types'
 import Breadcrumb from '@/components/layout/Breadcrumb'
 import Navbar from '@/components/layout/Navbar'
 
@@ -60,11 +61,11 @@ interface OfferFormProps {
         id: string
         title: string
         description: string | null
-        valid_days: number
+        valid_days: number | null
         commission_amount: number | null
         coupon_code_structure: string | null
-        offer_variables: string[] | null
-        is_active: boolean
+        offer_variables: string | null
+        is_active: boolean | null
         coupon_cap: number | null
         first_batch_target: number | null
         vehicle_config: string | null
@@ -92,31 +93,31 @@ interface OfferFormProps {
 }
 
 const SAMPLE_VALUES: Record<string, string> = {
-  LOYALTY_COUPON_CODE: '001_A12345_AUTOVERSA_M_ADHA12345',
-  REFERRAL_COUPON_CODE: '001_A12345_AUTOVERSA_B_ADHA12345',
-  LOYALTY_EXPIRY_DATE: '30/09/2026',
-  REFERRAL_EXPIRY_DATE: '31/12/2026',
-  ADVISOR_NAME: 'Ahmed Al Mansoori',
-  OFFER_TITLE: 'Pre-Launch Offer 2026',
-  PLATE_NUMBER: 'AUH · A · 12345',
-  MOBILE_NUMBER: '+971501234567',
+    LOYALTY_COUPON_CODE: '001_A12345_AUTOVERSA_M_ADHA12345',
+    REFERRAL_COUPON_CODE: '001_A12345_AUTOVERSA_B_ADHA12345',
+    LOYALTY_EXPIRY_DATE: '30/09/2026',
+    REFERRAL_EXPIRY_DATE: '31/12/2026',
+    ADVISOR_NAME: 'Ahmed Al Mansoori',
+    OFFER_TITLE: 'Pre-Launch Offer 2026',
+    PLATE_NUMBER: 'AUH · A · 12345',
+    MOBILE_NUMBER: '+971501234567',
 }
 
 const TABS = ['Details', 'Windows', 'Coupon Setup', 'Template', 'Sub-offers & Stages', 'WhatsApp'] as const
 type Tab = typeof TABS[number]
 
 const WA_TRIGGER_LABELS: Record<string, string> = {
-  SA_INVOICE: 'SA Invoice Trigger (sent at checkout)',
-  STAGE_1: 'Stage 1 Milestone',
-  STAGE_2: 'Stage 2 Milestone',
-  STAGE_3: 'Stage 3 Milestone',
+    SA_INVOICE: 'SA Invoice Trigger (sent at checkout)',
+    STAGE_1: 'Stage 1 Milestone',
+    STAGE_2: 'Stage 2 Milestone',
+    STAGE_3: 'Stage 3 Milestone',
 }
 
 const WA_TRIGGER_VARIABLES: Record<string, string[]> = {
-  SA_INVOICE: ['[PLATE_NO]', '[LOYALTY_COUPON_CODE]', '[REFERRAL_COUPON_CODE]', '[INVOICE_NO]'],
-  STAGE_1: ['[PLATE_NO]', '[LOYALTY_COUPON_CODE]', '[STAGE]', '[REWARD_LABEL]'],
-  STAGE_2: ['[PLATE_NO]', '[LOYALTY_COUPON_CODE]', '[STAGE]', '[REWARD_LABEL]'],
-  STAGE_3: ['[PLATE_NO]', '[LOYALTY_COUPON_CODE]', '[STAGE]', '[REWARD_LABEL]'],
+    SA_INVOICE: ['[PLATE_NO]', '[LOYALTY_COUPON_CODE]', '[REFERRAL_COUPON_CODE]', '[INVOICE_NO]'],
+    STAGE_1: ['[PLATE_NO]', '[LOYALTY_COUPON_CODE]', '[STAGE]', '[REWARD_LABEL]'],
+    STAGE_2: ['[PLATE_NO]', '[LOYALTY_COUPON_CODE]', '[STAGE]', '[REWARD_LABEL]'],
+    STAGE_3: ['[PLATE_NO]', '[LOYALTY_COUPON_CODE]', '[STAGE]', '[REWARD_LABEL]'],
 }
 
 const OPTIONAL_LABELS: Record<string, string> = {
@@ -173,12 +174,22 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
         catch { return null }
     })()
 
+    const parsedOfferVariables = (() => {
+        try {
+            if (!initialData?.offer_variables) return []
+            const parsed = JSON.parse(initialData.offer_variables)
+            return Array.isArray(parsed) ? parsed : []
+        } catch {
+            return []
+        }
+    })()
+
     const [form, setForm] = useState({
         title: initialData?.title || '',
         description: initialData?.description || '',
         commission_amount: initialData?.commission_amount?.toString() || '',
         coupon_code_structure: initialData?.coupon_code_structure || '',
-        offer_variables: (initialData?.offer_variables || []) as string[],
+        offer_variables: parsedOfferVariables,
         is_active: initialData?.is_active ?? true,
         coupon_cap: initialData?.coupon_cap?.toString() || '0',
         first_batch_target: initialData?.first_batch_target?.toString() || '',
@@ -224,11 +235,12 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
         }
     }, [mode, initialData?.id])
 
+    // Stable dependency via JSON.stringify — prevents infinite re-render from array reference churn
     useEffect(() => {
         const vars = Array.isArray(form.offer_variables) ? form.offer_variables : []
         setMTemplate(prev => ({ ...prev, variablePositions: prev.variablePositions.filter(p => vars.includes(p.key)) }))
         setBTemplate(prev => ({ ...prev, variablePositions: prev.variablePositions.filter(p => vars.includes(p.key)) }))
-    }, [form.offer_variables])
+    }, [JSON.stringify(form.offer_variables)])
 
     async function loadVariables() {
         const { data } = await supabase
@@ -314,13 +326,24 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
         })
     }
 
+    // On image replace, wipe entire template state — positions, existing IDs, everything
     function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>, setter: React.Dispatch<React.SetStateAction<TemplateState>>) {
         const file = e.target.files?.[0]
         if (!file) return
         if (!file.type.startsWith('image/')) { showToast('Please upload an image file', 'error'); return }
         const url = URL.createObjectURL(file)
         const img = new Image()
-        img.onload = () => setter(prev => ({ ...prev, imageFile: file, imagePreview: url, imageDimensions: { width: img.naturalWidth, height: img.naturalHeight } }))
+        img.onload = () => setter(_ => ({
+            imageFile: file,
+            imagePreview: url,
+            imageDimensions: { width: img.naturalWidth, height: img.naturalHeight },
+            variablePositions: [],
+            selectedVariableKey: null,
+            draggingKey: null,
+            existingTemplateId: null,
+            existingTemplateUrl: null,
+            previewMode: false,
+        }))
         img.src = url
     }
 
@@ -382,21 +405,18 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                 errors.first_batch_target = 'Visit target must be between 1 and 99999'
             }
         }
-        
         if (form.coupon_cap) {
             const cap = Number(form.coupon_cap)
             if (isNaN(cap) || cap < 0 || cap > 99999) {
                 errors.coupon_cap = 'Coupon cap must be between 0 and 99999'
             }
         }
-
         if (form.commission_amount) {
             const comm = Number(form.commission_amount)
             if (isNaN(comm) || comm < 0 || comm > 999999) {
                 errors.commission_amount = 'Commission must be between 0 and 999999'
             }
         }
-
         if (form.issuance_window_type === 'date_range') {
             if (!form.issuance_start_date) errors.issuance_start = 'Issuance start date is required'
             if (!form.issuance_end_date) errors.issuance_end = 'Issuance end date is required'
@@ -405,9 +425,7 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                 errors.issuance_days = 'Issuance window days is required'
             } else {
                 const days = Number(form.issuance_window_days)
-                if (isNaN(days) || days < 1 || days > 3650) {
-                    errors.issuance_days = 'Days must be between 1 and 3650'
-                }
+                if (isNaN(days) || days < 1 || days > 3650) errors.issuance_days = 'Days must be between 1 and 3650'
             }
         }
         if (form.m_redemption_window_type === 'date_range') {
@@ -418,9 +436,7 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                 errors.m_redemption_days = 'Loyalty redemption days is required'
             } else {
                 const days = Number(form.valid_days)
-                if (isNaN(days) || days < 1 || days > 3650) {
-                    errors.m_redemption_days = 'Days must be between 1 and 3650'
-                }
+                if (isNaN(days) || days < 1 || days > 3650) errors.m_redemption_days = 'Days must be between 1 and 3650'
             }
         }
         if (form.b_redemption_window_type === 'date_range') {
@@ -431,9 +447,7 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                 errors.b_redemption_days = 'Referral redemption days is required'
             } else {
                 const days = Number(form.b_valid_days)
-                if (isNaN(days) || days < 1 || days > 3650) {
-                    errors.b_redemption_days = 'Days must be between 1 and 3650'
-                }
+                if (isNaN(days) || days < 1 || days > 3650) errors.b_redemption_days = 'Days must be between 1 and 3650'
             }
         }
         const detailsErrors = ['title', 'first_batch_target', 'coupon_cap', 'commission_amount']
@@ -481,14 +495,14 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
 
     async function doSave() {
         setSaving(true)
-        const payload: Record<string, any> = {
+        const payload: Database['public']['Tables']['offers']['Insert'] = {
             title: form.title.trim(),
             description: form.description.trim() || null,
             valid_days: form.valid_days ? Number(form.valid_days) : null,
             b_valid_days: form.b_valid_days ? Number(form.b_valid_days) : null,
             commission_amount: form.commission_amount ? Number(form.commission_amount) : null,
             coupon_code_structure: form.coupon_code_structure.trim() || null,
-            offer_variables: form.offer_variables.length > 0 ? form.offer_variables : null,
+            offer_variables: form.offer_variables.length > 0 ? JSON.stringify(form.offer_variables) : null,
             is_active: form.is_active,
             coupon_cap: Number(form.coupon_cap) || 800,
             first_batch_target: Number(form.first_batch_target),
@@ -522,10 +536,14 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
             offerId = data.id
         }
         if (!offerId) { setSaving(false); return }
+
+        // saveOneTemplate returns boolean — abort entire save if a template upload fails
         // TODO: templates.coupon_type still uses M/B — migration deferred
-        await saveOneTemplate(offerId, 'M', mTemplate)
-        // TODO: templates.coupon_type still uses M/B — migration deferred
-        await saveOneTemplate(offerId, 'B', bTemplate)
+        const mOk = await saveOneTemplate(offerId, 'M', mTemplate)
+        if (!mOk) { setSaving(false); return }
+        const bOk = await saveOneTemplate(offerId, 'B', bTemplate)
+        if (!bOk) { setSaving(false); return }
+
         await saveSubOffers(offerId)
         await saveStages(offerId)
         await saveWaTemplates(offerId)
@@ -534,22 +552,26 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
         setTimeout(() => router.push('/offers'), 1000)
     }
 
+    // Returns true on success, false on failure — caller aborts if false
     // TODO: templates.coupon_type still uses M/B — migration deferred
-    async function saveOneTemplate(offerId: string, couponType: 'M' | 'B', tState: TemplateState) {
-        if (!tState.imageFile && !tState.existingTemplateId) return
+    async function saveOneTemplate(offerId: string, couponType: 'M' | 'B', tState: TemplateState): Promise<boolean> {
+        if (!tState.imageFile && !tState.existingTemplateId) return true
         let fileUrl = tState.existingTemplateUrl
         let storagePath = null
         if (tState.imageFile) {
             const ext = tState.imageFile.name.split('.').pop()
             const path = `templates/${offerId}/template_${couponType.toLowerCase()}.${ext}`
             const { error: uploadError } = await supabase.storage.from('templates').upload(path, tState.imageFile, { upsert: true })
-            if (uploadError) { showToast(`Failed to upload ${couponType} template image`, 'error'); return }
+            if (uploadError) {
+                showToast(`Failed to upload ${couponType === 'M' ? 'Loyalty' : 'Referral'} template image`, 'error')
+                return false
+            }
             const { data: urlData } = supabase.storage.from('templates').getPublicUrl(path)
             fileUrl = urlData.publicUrl
             storagePath = path
         }
-        if (!fileUrl) return
-        const templatePayload: Record<string, any> = {
+        if (!fileUrl) return true
+        const templatePayload: Database['public']['Tables']['templates']['Insert'] = {
             offer_id: offerId,
             name: `${form.title} — ${couponType === 'M' ? `${form.loyalty_brand} Loyalty` : `${form.referral_brand} Referral`}`,
             file_url: fileUrl,
@@ -559,19 +581,27 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
             is_active: true,
             is_default: true,
             updated_at: new Date().toISOString(),
-            ...(storagePath && { storage_path: storagePath }),
+            storage_path: storagePath,
         }
         let templateId = tState.existingTemplateId
         if (tState.existingTemplateId) {
-            await supabase.from('templates').update(templatePayload).eq('id', tState.existingTemplateId)
+            const { error } = await supabase.from('templates').update(templatePayload).eq('id', tState.existingTemplateId)
+            if (error) {
+                showToast(`Failed to save ${couponType === 'M' ? 'Loyalty' : 'Referral'} template`, 'error')
+                return false
+            }
         } else {
-            const { data } = await supabase.from('templates').insert(templatePayload).select('id').single()
+            const { data, error } = await supabase.from('templates').insert(templatePayload).select('id').single()
+            if (error || !data) {
+                showToast(`Failed to save ${couponType === 'M' ? 'Loyalty' : 'Referral'} template`, 'error')
+                return false
+            }
             if (data) templateId = data.id
         }
-        if (!templateId) return
+        if (!templateId) return false
         await supabase.from('template_variable_positions').delete().eq('template_id', templateId)
         if (tState.variablePositions.length > 0) {
-            await supabase.from('template_variable_positions').insert(
+            const { error } = await supabase.from('template_variable_positions').insert(
                 tState.variablePositions.map(p => ({
                     template_id: templateId!,
                     variable_key: p.key,
@@ -582,7 +612,12 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                     font_weight: p.font_weight,
                 }))
             )
+            if (error) {
+                showToast(`Failed to save ${couponType === 'M' ? 'Loyalty' : 'Referral'} template variable positions`, 'error')
+                return false
+            }
         }
+        return true
     }
 
     async function saveSubOffers(offerId: string) {
@@ -656,17 +691,17 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                 {tState.imagePreview && (
                     <div style={{ marginTop: '16px' }}>
 
-                        {/* Mode toggle + unplaced chips */}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px', gap: '12px' }}>
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', flex: 1 }}>
                                 {offerVars.length === 0 && (
                                     <p style={{ fontSize: '12px', color: '#888', margin: 0 }}>Select print variables in Coupon Setup tab first.</p>
                                 )}
+                                {/* FIX: key prefixed with accentColor — prevents duplicate keys across both template editors rendered simultaneously */}
                                 {!tState.previewMode && offerVars.filter(key => !getPositionForKey(tState.variablePositions, key)).map(key => {
                                     const varConfig = availableVariables.find(v => v.key === key)
                                     if (!varConfig) return null
                                     return (
-                                        <div key={key} draggable
+                                        <div key={`${accentColor}-${key}`} draggable
                                             onDragStart={() => setter(prev => ({ ...prev, draggingKey: key }))}
                                             style={{ padding: '5px 10px', backgroundColor: accentColor, color: '#FFFFFF', borderRadius: '6px', fontSize: '12px', fontWeight: '600', cursor: 'grab', userSelect: 'none' }}>
                                             ⠿ {varConfig.label}
@@ -696,7 +731,6 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                             </div>
                         </div>
 
-                        {/* Canvas — drag/drop works in both modes */}
                         <div
                             ref={containerRef}
                             onDragOver={e => e.preventDefault()}
@@ -712,7 +746,6 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                             <img src={tState.imagePreview} alt="Template"
                                 style={{ display: 'block', width: '100%', height: 'auto' }} draggable={false} />
 
-                            {/* PIN MODE — coordinate pins */}
                             {!tState.previewMode && tState.variablePositions.map(pos => {
                                 const varConfig = availableVariables.find(v => v.key === pos.key)
                                 if (!varConfig) return null
@@ -738,7 +771,6 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                                 )
                             })}
 
-                            {/* PREVIEW MODE — rendered text, draggable + clickable */}
                             {tState.previewMode && tState.variablePositions.map(pos => {
                                 const isSelected = tState.selectedVariableKey === pos.key
                                 return (
@@ -780,7 +812,6 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                             })}
                         </div>
 
-                        {/* Font editor panel — both modes, when variable selected */}
                         {tState.selectedVariableKey && selectedVarConfig && (
                             <div style={{ marginTop: '16px', padding: '20px', backgroundColor: '#F0F7FF', borderRadius: '12px', border: `1.5px solid ${accentColor}` }}>
                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
@@ -790,7 +821,6 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                                     <button onClick={() => setter(prev => ({ ...prev, selectedVariableKey: null }))} style={{ background: 'none', border: 'none', fontSize: '16px', cursor: 'pointer', color: '#666', padding: '0 4px' }}>×</button>
                                 </div>
                                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '12px' }}>
-                                    {/* X/Y inputs in pin mode only */}
                                     {!tState.previewMode && (
                                         <>
                                             <div>
@@ -855,6 +885,7 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
         <div style={{ minHeight: '100vh', backgroundColor: '#F7F7F7', paddingTop: '16px' }}>
             <style>{`
         @keyframes slideIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         input:focus, textarea:focus, select:focus { border-color: #0074BD !important; outline: none; }
       `}</style>
 
@@ -864,6 +895,20 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                 </div>
             )}
 
+            {/* Saving overlay — always on top, fully visible, blocks interaction */}
+            {saving && (
+                <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.65)', zIndex: 3000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ backgroundColor: '#FFFFFF', borderRadius: '20px', padding: '40px 56px', textAlign: 'center', boxShadow: '0 8px 40px rgba(0,0,0,0.25)' }}>
+                        <div style={{ width: '40px', height: '40px', border: '4px solid #E0E0E0', borderTopColor: '#0074BD', borderRadius: '50%', margin: '0 auto 20px', animation: 'spin 0.8s linear infinite' }} />
+                        <p style={{ fontSize: '16px', fontWeight: '700', color: '#162860', margin: '0 0 6px' }}>
+                            {mode === 'create' ? 'Creating offer...' : 'Saving changes...'}
+                        </p>
+                        <p style={{ fontSize: '13px', color: '#888', margin: 0 }}>Please wait</p>
+                    </div>
+                </div>
+            )}
+
+            {/* Optional confirm modal — zIndex below saving overlay */}
             {showOptionalConfirm && (
                 <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
                     <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '32px', maxWidth: '480px', width: '100%', boxShadow: '0 8px 40px rgba(0,0,0,0.2)' }}>
@@ -879,7 +924,8 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                         </div>
                         <div style={{ display: 'flex', gap: '10px' }}>
                             <button onClick={() => setShowOptionalConfirm(false)} style={{ flex: 1, padding: '12px', backgroundColor: '#F0F0F0', color: '#444', border: 'none', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>Go Back & Fill</button>
-                            <button onClick={doSave} style={{ flex: 1, padding: '12px', backgroundColor: '#162860', color: '#FFFFFF', border: 'none', borderRadius: '10px', fontSize: '14px', fontWeight: '700', cursor: 'pointer' }}>Continue Anyway</button>
+                            {/* Close modal first, then doSave — saving overlay takes over */}
+                            <button onClick={async () => { setShowOptionalConfirm(false); await doSave() }} style={{ flex: 1, padding: '12px', backgroundColor: '#162860', color: '#FFFFFF', border: 'none', borderRadius: '10px', fontSize: '14px', fontWeight: '700', cursor: 'pointer' }}>Continue Anyway</button>
                         </div>
                     </div>
                 </div>
@@ -934,27 +980,27 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                             <div>
                                 <label style={labelStyle}>Title *</label>
                                 <input style={{ ...inputStyle, ...(fieldErrors.title ? { borderColor: '#D0021B' } : {}) }}
-                                  value={form.title}
-                                  onChange={e => {
-                                      let val = e.target.value.replace(/[<>]/g, '');
-                                      if (val.length > 100) val = val.slice(0, 100);
-                                      setForm(f => ({ ...f, title: val }));
-                                  }}
-                                  onBlur={() => setForm(f => ({ ...f, title: f.title.trim() }))}
-                                  placeholder="e.g. Pre-Launch Offer 2026" />
+                                    value={form.title}
+                                    onChange={e => {
+                                        let val = e.target.value.replace(/[<>]/g, '');
+                                        if (val.length > 100) val = val.slice(0, 100);
+                                        setForm(f => ({ ...f, title: val }));
+                                    }}
+                                    onBlur={() => setForm(f => ({ ...f, title: f.title.trim() }))}
+                                    placeholder="e.g. Pre-Launch Offer 2026" />
                                 {err('title')}
                             </div>
                             <div>
                                 <label style={labelStyle}>Description</label>
                                 <textarea style={{ ...inputStyle, height: '80px', resize: 'vertical' }}
-                                  value={form.description}
-                                  onChange={e => {
-                                      let val = e.target.value.replace(/[<>]/g, '');
-                                      if (val.length > 500) val = val.slice(0, 500);
-                                      setForm(f => ({ ...f, description: val }));
-                                  }}
-                                  onBlur={() => setForm(f => ({ ...f, description: f.description.trim() }))}
-                                  placeholder="Brief description of this offer" />
+                                    value={form.description}
+                                    onChange={e => {
+                                        let val = e.target.value.replace(/[<>]/g, '');
+                                        if (val.length > 500) val = val.slice(0, 500);
+                                        setForm(f => ({ ...f, description: val }));
+                                    }}
+                                    onBlur={() => setForm(f => ({ ...f, description: f.description.trim() }))}
+                                    placeholder="Brief description of this offer" />
                             </div>
                             <Divider />
                             <SectionHeader title="Rules" />
@@ -962,142 +1008,134 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                                 <div>
                                     <label style={labelStyle}>Coupon Cap</label>
                                     <input style={{ ...inputStyle, ...(fieldErrors.coupon_cap ? { borderColor: '#D0021B' } : {}) }}
-                                      value={form.coupon_cap}
-                                      onChange={e => {
-                                          let val = e.target.value.replace(/\D/g, '');
-                                          if (val && Number(val) > 99999) val = '99999';
-                                          setForm(f => ({ ...f, coupon_cap: val }));
-                                      }} />
+                                        value={form.coupon_cap}
+                                        onChange={e => {
+                                            let val = e.target.value.replace(/\D/g, '');
+                                            if (val && Number(val) > 99999) val = '99999';
+                                            setForm(f => ({ ...f, coupon_cap: val }));
+                                        }} />
                                     {err('coupon_cap')}
                                     <p style={hintStyle}>Max coupons issuable.</p>
                                 </div>
                                 <div>
                                     <label style={labelStyle}>Visit Target *</label>
                                     <input style={{ ...inputStyle, ...(fieldErrors.first_batch_target ? { borderColor: '#D0021B' } : {}) }}
-                                      value={form.first_batch_target}
-                                      onChange={e => {
-                                          let val = e.target.value.replace(/\D/g, '');
-                                          if (val && Number(val) > 99999) val = '99999';
-                                          setForm(f => ({ ...f, first_batch_target: val }));
-                                      }}
-                                      placeholder="e.g. 100" />
+                                        value={form.first_batch_target}
+                                        onChange={e => {
+                                            let val = e.target.value.replace(/\D/g, '');
+                                            if (val && Number(val) > 99999) val = '99999';
+                                            setForm(f => ({ ...f, first_batch_target: val }));
+                                        }}
+                                        placeholder="e.g. 100" />
                                     {err('first_batch_target')}
                                     <p style={hintStyle}>Visits before switching to next offer.</p>
                                 </div>
                                 <div>
                                     <label style={labelStyle}>Commission per Redemption (AED)</label>
                                     <input style={{ ...inputStyle, ...(fieldErrors.commission_amount ? { borderColor: '#D0021B' } : {}) }}
-                                      value={form.commission_amount}
-                                      onChange={e => {
-                                          let val = e.target.value.replace(/[^\d.]/g, '');
-                                          const parts = val.split('.');
-                                          if (parts.length > 2) val = parts[0] + '.' + parts.slice(1).join('');
-                                          if (val && Number(val) > 999999) val = '999999';
-                                          setForm(f => ({ ...f, commission_amount: val }));
-                                      }}
-                                      placeholder="e.g. 50" />
+                                        value={form.commission_amount}
+                                        onChange={e => {
+                                            let val = e.target.value.replace(/[^\d.]/g, '');
+                                            const parts = val.split('.');
+                                            if (parts.length > 2) val = parts[0] + '.' + parts.slice(1).join('');
+                                            if (val && Number(val) > 999999) val = '999999';
+                                            setForm(f => ({ ...f, commission_amount: val }));
+                                        }}
+                                        placeholder="e.g. 50" />
                                     {err('commission_amount')}
                                 </div>
                             </div>
                             <Divider />
                             <SectionHeader title="Vehicle Eligibility & Brand Config" />
-
-                            {/* Loyalty Campaign Code */}
                             <div>
-                              <label style={labelStyle}>Loyalty Campaign Code</label>
-                              <input style={inputStyle}
-                                value={form.loyalty_campaign_code}
-                                onChange={e => {
-                                    let val = e.target.value.replace(/[<>]/g, '').toUpperCase();
-                                    if (val.length > 100) val = val.slice(0, 100);
-                                    setForm(f => ({ ...f, loyalty_campaign_code: val }));
-                                }}
-                                onBlur={() => setForm(f => ({ ...f, loyalty_campaign_code: f.loyalty_campaign_code.trim() }))}
-                                placeholder="e.g. ALMARAGHI"
-                              />
-                              <p style={hintStyle}>Appears in the loyalty coupon code string. Default: ALMARAGHI.</p>
+                                <label style={labelStyle}>Loyalty Campaign Code</label>
+                                <input style={inputStyle}
+                                    value={form.loyalty_campaign_code}
+                                    onChange={e => {
+                                        let val = e.target.value.replace(/[<>]/g, '').toUpperCase();
+                                        if (val.length > 100) val = val.slice(0, 100);
+                                        setForm(f => ({ ...f, loyalty_campaign_code: val }));
+                                    }}
+                                    onBlur={() => setForm(f => ({ ...f, loyalty_campaign_code: f.loyalty_campaign_code.trim() }))}
+                                    placeholder="e.g. ALMARAGHI"
+                                />
+                                <p style={hintStyle}>Appears in the loyalty coupon code string. Default: ALMARAGHI.</p>
                             </div>
-
-                            {/* Referral Campaign Code */}
                             <div>
-                              <label style={labelStyle}>Referral Campaign Code</label>
-                              <input style={inputStyle}
-                                value={form.referral_campaign_code}
-                                onChange={e => {
-                                    let val = e.target.value.replace(/[<>]/g, '').toUpperCase();
-                                    if (val.length > 100) val = val.slice(0, 100);
-                                    setForm(f => ({ ...f, referral_campaign_code: val }));
-                                }}
-                                onBlur={() => setForm(f => ({ ...f, referral_campaign_code: f.referral_campaign_code.trim() }))}
-                                placeholder="e.g. AUTOVERSA"
-                              />
-                              <p style={hintStyle}>Appears in the referral coupon code string. Default: AUTOVERSA.</p>
-                            </div>
-
-                            {/* Loyalty Brand */}
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                              <div>
-                                <label style={labelStyle}>Loyalty Brand (customer receiving the coupon)</label>
-                                <select style={inputStyle}
-                                  value={form.loyalty_brand}
-                                  onChange={e => {
-                                    const brand = e.target.value
-                                    const code = brand.charAt(0).toUpperCase()
-                                    setForm(f => ({ ...f, loyalty_brand: brand, loyalty_code: code }))
-                                  }}
-                                >
-                                  <option value="Mercedes-Benz">Mercedes-Benz</option>
-                                </select>
-                                <p style={hintStyle}>More brands will be added in future.</p>
-                              </div>
-                              <div>
-                                <label style={labelStyle}>Loyalty Short Code (used in coupon code)</label>
+                                <label style={labelStyle}>Referral Campaign Code</label>
                                 <input style={inputStyle}
-                                  value={form.loyalty_code}
-                                  onChange={e => {
-                                      let val = e.target.value.replace(/[<>]/g, '').toUpperCase();
-                                      if (val.length > 5) val = val.slice(0, 5);
-                                      setForm(f => ({ ...f, loyalty_code: val }));
-                                  }}
-                                  onBlur={() => setForm(f => ({ ...f, loyalty_code: f.loyalty_code.trim() }))}
-                                  maxLength={5}
-                                  placeholder="e.g. M"
+                                    value={form.referral_campaign_code}
+                                    onChange={e => {
+                                        let val = e.target.value.replace(/[<>]/g, '').toUpperCase();
+                                        if (val.length > 100) val = val.slice(0, 100);
+                                        setForm(f => ({ ...f, referral_campaign_code: val }));
+                                    }}
+                                    onBlur={() => setForm(f => ({ ...f, referral_campaign_code: f.referral_campaign_code.trim() }))}
+                                    placeholder="e.g. AUTOVERSA"
                                 />
-                                <p style={hintStyle}>Auto-suggested from brand name. Editable.</p>
-                              </div>
+                                <p style={hintStyle}>Appears in the referral coupon code string. Default: AUTOVERSA.</p>
                             </div>
-
-                            {/* Referral Brand */}
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                              <div>
-                                <label style={labelStyle}>Referral Brand (customer bringing in the referral)</label>
-                                <select style={inputStyle}
-                                  value={form.referral_brand}
-                                  onChange={e => {
-                                    const brand = e.target.value
-                                    const code = brand.charAt(0).toUpperCase()
-                                    setForm(f => ({ ...f, referral_brand: brand, referral_code: code }))
-                                  }}
-                                >
-                                  <option value="BMW">BMW</option>
-                                </select>
-                                <p style={hintStyle}>More brands will be added in future.</p>
-                              </div>
-                              <div>
-                                <label style={labelStyle}>Referral Short Code (used in coupon code)</label>
-                                <input style={inputStyle}
-                                  value={form.referral_code}
-                                  onChange={e => {
-                                      let val = e.target.value.replace(/[<>]/g, '').toUpperCase();
-                                      if (val.length > 5) val = val.slice(0, 5);
-                                      setForm(f => ({ ...f, referral_code: val }));
-                                  }}
-                                  onBlur={() => setForm(f => ({ ...f, referral_code: f.referral_code.trim() }))}
-                                  maxLength={5}
-                                  placeholder="e.g. B"
-                                />
-                                <p style={hintStyle}>Auto-suggested from brand name. Editable.</p>
-                              </div>
+                                <div>
+                                    <label style={labelStyle}>Loyalty Brand (customer receiving the coupon)</label>
+                                    <select style={inputStyle}
+                                        value={form.loyalty_brand}
+                                        onChange={e => {
+                                            const brand = e.target.value
+                                            const code = brand.charAt(0).toUpperCase()
+                                            setForm(f => ({ ...f, loyalty_brand: brand, loyalty_code: code }))
+                                        }}
+                                    >
+                                        <option value="Mercedes-Benz">Mercedes-Benz</option>
+                                    </select>
+                                    <p style={hintStyle}>More brands will be added in future.</p>
+                                </div>
+                                <div>
+                                    <label style={labelStyle}>Loyalty Short Code (used in coupon code)</label>
+                                    <input style={inputStyle}
+                                        value={form.loyalty_code}
+                                        onChange={e => {
+                                            let val = e.target.value.replace(/[<>]/g, '').toUpperCase();
+                                            if (val.length > 5) val = val.slice(0, 5);
+                                            setForm(f => ({ ...f, loyalty_code: val }));
+                                        }}
+                                        onBlur={() => setForm(f => ({ ...f, loyalty_code: f.loyalty_code.trim() }))}
+                                        maxLength={5}
+                                        placeholder="e.g. M"
+                                    />
+                                    <p style={hintStyle}>Auto-suggested from brand name. Editable.</p>
+                                </div>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                                <div>
+                                    <label style={labelStyle}>Referral Brand (customer bringing in the referral)</label>
+                                    <select style={inputStyle}
+                                        value={form.referral_brand}
+                                        onChange={e => {
+                                            const brand = e.target.value
+                                            const code = brand.charAt(0).toUpperCase()
+                                            setForm(f => ({ ...f, referral_brand: brand, referral_code: code }))
+                                        }}
+                                    >
+                                        <option value="BMW">BMW</option>
+                                    </select>
+                                    <p style={hintStyle}>More brands will be added in future.</p>
+                                </div>
+                                <div>
+                                    <label style={labelStyle}>Referral Short Code (used in coupon code)</label>
+                                    <input style={inputStyle}
+                                        value={form.referral_code}
+                                        onChange={e => {
+                                            let val = e.target.value.replace(/[<>]/g, '').toUpperCase();
+                                            if (val.length > 5) val = val.slice(0, 5);
+                                            setForm(f => ({ ...f, referral_code: val }));
+                                        }}
+                                        onBlur={() => setForm(f => ({ ...f, referral_code: f.referral_code.trim() }))}
+                                        maxLength={5}
+                                        placeholder="e.g. B"
+                                    />
+                                    <p style={hintStyle}>Auto-suggested from brand name. Editable.</p>
+                                </div>
                             </div>
                             <Divider />
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px', backgroundColor: '#F7F7F7', borderRadius: '10px' }}>
@@ -1134,12 +1172,12 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                                 <div style={{ maxWidth: '220px' }}>
                                     <label style={labelStyle}>Number of Days from Creation *</label>
                                     <input style={{ ...inputStyle, ...(fieldErrors.issuance_days ? { borderColor: '#D0021B' } : {}) }}
-                                      value={form.issuance_window_days}
-                                      onChange={e => {
-                                          let val = e.target.value.replace(/\D/g, '');
-                                          if (val && Number(val) > 3650) val = '3650';
-                                          setForm(f => ({ ...f, issuance_window_days: val }));
-                                      }} />
+                                        value={form.issuance_window_days}
+                                        onChange={e => {
+                                            let val = e.target.value.replace(/\D/g, '');
+                                            if (val && Number(val) > 3650) val = '3650';
+                                            setForm(f => ({ ...f, issuance_window_days: val }));
+                                        }} />
                                     {err('issuance_days')}
                                 </div>
                             )}
@@ -1164,12 +1202,12 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                                 <div style={{ maxWidth: '220px' }}>
                                     <label style={labelStyle}>Days from Issue Date *</label>
                                     <input style={{ ...inputStyle, ...(fieldErrors.m_redemption_days ? { borderColor: '#D0021B' } : {}) }}
-                                      value={form.valid_days}
-                                      onChange={e => {
-                                          let val = e.target.value.replace(/\D/g, '');
-                                          if (val && Number(val) > 3650) val = '3650';
-                                          setForm(f => ({ ...f, valid_days: val }));
-                                      }} />
+                                        value={form.valid_days}
+                                        onChange={e => {
+                                            let val = e.target.value.replace(/\D/g, '');
+                                            if (val && Number(val) > 3650) val = '3650';
+                                            setForm(f => ({ ...f, valid_days: val }));
+                                        }} />
                                     {err('m_redemption_days')}
                                 </div>
                             )}
@@ -1194,12 +1232,12 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                                 <div style={{ maxWidth: '220px' }}>
                                     <label style={labelStyle}>Days from Issue Date *</label>
                                     <input style={{ ...inputStyle, ...(fieldErrors.b_redemption_days ? { borderColor: '#D0021B' } : {}) }}
-                                      value={form.b_valid_days}
-                                      onChange={e => {
-                                          let val = e.target.value.replace(/\D/g, '');
-                                          if (val && Number(val) > 3650) val = '3650';
-                                          setForm(f => ({ ...f, b_valid_days: val }));
-                                      }} />
+                                        value={form.b_valid_days}
+                                        onChange={e => {
+                                            let val = e.target.value.replace(/\D/g, '');
+                                            if (val && Number(val) > 3650) val = '3650';
+                                            setForm(f => ({ ...f, b_valid_days: val }));
+                                        }} />
                                     {err('b_redemption_days')}
                                 </div>
                             )}
@@ -1217,14 +1255,14 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                             </div>
                             <div style={{ display: 'flex', gap: '8px' }}>
                                 <input style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }}
-                                  value={form.coupon_code_structure}
-                                  onChange={e => {
-                                      let val = e.target.value.replace(/[<>]/g, '');
-                                      if (val.length > 100) val = val.slice(0, 100);
-                                      setForm(f => ({ ...f, coupon_code_structure: val }));
-                                  }}
-                                  onBlur={() => setForm(f => ({ ...f, coupon_code_structure: f.coupon_code_structure.trim() }))}
-                                  placeholder="e.g. [SEQ]_[INVOICE]_[CAMPAIGN]_[M_OR_B]_[PLATE]" />
+                                    value={form.coupon_code_structure}
+                                    onChange={e => {
+                                        let val = e.target.value.replace(/[<>]/g, '');
+                                        if (val.length > 100) val = val.slice(0, 100);
+                                        setForm(f => ({ ...f, coupon_code_structure: val }));
+                                    }}
+                                    onBlur={() => setForm(f => ({ ...f, coupon_code_structure: f.coupon_code_structure.trim() }))}
+                                    placeholder="e.g. [SEQ]_[INVOICE]_[CAMPAIGN]_[M_OR_B]_[PLATE]" />
                                 <button onClick={() => setForm(f => ({ ...f, coupon_code_structure: '[SEQ]_[INVOICE]_[CAMPAIGN]_[M_OR_B]_[PLATE]' }))} style={{ padding: '0 16px', backgroundColor: '#F0F4FF', color: '#162860', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' }}>Use Default</button>
                             </div>
                             {form.coupon_code_structure && (
@@ -1280,121 +1318,121 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
 
                     {activeTab === 'Sub-offers & Stages' && (
                         <>
-                             <SectionHeader title="Sub-offers" />
-                             <p style={hintStyle}>Service options a referral customer picks at appointment booking.</p>
-                             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                                 {subOffers.map((s, i) => (
-                                     <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', backgroundColor: '#F7F9FF', borderRadius: '10px', border: '1px solid #E0E8FF' }}>
-                                         <input style={{ ...inputStyle, flex: 1 }}
-                                           value={s.name}
-                                           onChange={e => {
-                                               let val = e.target.value.replace(/[<>]/g, '');
-                                               if (val.length > 100) val = val.slice(0, 100);
-                                               updateSubOffer(i, { name: val });
-                                           }}
-                                           onBlur={() => updateSubOffer(i, { name: s.name.trim() })}
-                                           placeholder="e.g. Free Minor Service Including Parts" />
-                                         <div onClick={() => updateSubOffer(i, { is_active: !s.is_active })} style={{ width: '36px', height: '20px', borderRadius: '100px', flexShrink: 0, backgroundColor: s.is_active ? '#0074BD' : '#CCCCCC', cursor: 'pointer', position: 'relative', transition: 'background-color 0.2s' }}>
-                                             <div style={{ position: 'absolute', top: '2px', left: s.is_active ? '18px' : '2px', width: '16px', height: '16px', borderRadius: '50%', backgroundColor: '#FFFFFF', transition: 'left 0.2s' }} />
-                                         </div>
-                                         <button onClick={() => removeSubOffer(i)} style={{ padding: '6px 10px', backgroundColor: '#FFF0F0', color: '#D0021B', border: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: '600', cursor: 'pointer', flexShrink: 0 }}>✕</button>
-                                     </div>
-                                 ))}
-                                 <button onClick={addSubOffer} style={{ padding: '10px', backgroundColor: '#F0F4FF', color: '#162860', border: '1.5px dashed #0074BD', borderRadius: '10px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>+ Add Sub-offer</button>
-                             </div>
-                             <Divider />
-                             <SectionHeader title={`${form.loyalty_brand || 'Mercedes-Benz'} Loyalty Stages`} />
-                             <p style={hintStyle}>Reward tiers unlocked as referral customers complete visits.</p>
-                             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                                 {stages.map((s, i) => (
-                                     <div key={i} style={{ padding: '16px', backgroundColor: '#F7F9FF', borderRadius: '12px', border: '1px solid #E0E8FF', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                             <span style={{ fontSize: '12px', fontWeight: '700', color: '#162860', backgroundColor: '#E0E8FF', padding: '3px 10px', borderRadius: '20px' }}>Stage {s.stage_number}</span>
-                                             <button onClick={() => removeStage(i)} style={{ padding: '4px 8px', backgroundColor: '#FFF0F0', color: '#D0021B', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>✕ Remove</button>
-                                         </div>
-                                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '12px' }}>
-                                             <div>
-                                                 <label style={labelStyle}>Referral Visits Required</label>
-                                                 <input style={inputStyle}
-                                                   value={s.bmw_visits_required}
-                                                   onChange={e => {
-                                                       let val = e.target.value.replace(/\D/g, '');
-                                                       if (val && Number(val) > 9999) val = '9999';
-                                                       updateStage(i, { bmw_visits_required: Number(val) || 1 });
-                                                   }} />
-                                             </div>
+                            <SectionHeader title="Sub-offers" />
+                            <p style={hintStyle}>Service options a referral customer picks at appointment booking.</p>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                {subOffers.map((s, i) => (
+                                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 16px', backgroundColor: '#F7F9FF', borderRadius: '10px', border: '1px solid #E0E8FF' }}>
+                                        <input style={{ ...inputStyle, flex: 1 }}
+                                            value={s.name}
+                                            onChange={e => {
+                                                let val = e.target.value.replace(/[<>]/g, '');
+                                                if (val.length > 100) val = val.slice(0, 100);
+                                                updateSubOffer(i, { name: val });
+                                            }}
+                                            onBlur={() => updateSubOffer(i, { name: s.name.trim() })}
+                                            placeholder="e.g. Free Minor Service Including Parts" />
+                                        <div onClick={() => updateSubOffer(i, { is_active: !s.is_active })} style={{ width: '36px', height: '20px', borderRadius: '100px', flexShrink: 0, backgroundColor: s.is_active ? '#0074BD' : '#CCCCCC', cursor: 'pointer', position: 'relative', transition: 'background-color 0.2s' }}>
+                                            <div style={{ position: 'absolute', top: '2px', left: s.is_active ? '18px' : '2px', width: '16px', height: '16px', borderRadius: '50%', backgroundColor: '#FFFFFF', transition: 'left 0.2s' }} />
+                                        </div>
+                                        <button onClick={() => removeSubOffer(i)} style={{ padding: '6px 10px', backgroundColor: '#FFF0F0', color: '#D0021B', border: 'none', borderRadius: '6px', fontSize: '13px', fontWeight: '600', cursor: 'pointer', flexShrink: 0 }}>✕</button>
+                                    </div>
+                                ))}
+                                <button onClick={addSubOffer} style={{ padding: '10px', backgroundColor: '#F0F4FF', color: '#162860', border: '1.5px dashed #0074BD', borderRadius: '10px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>+ Add Sub-offer</button>
+                            </div>
+                            <Divider />
+                            <SectionHeader title={`${form.loyalty_brand || 'Mercedes-Benz'} Loyalty Stages`} />
+                            <p style={hintStyle}>Reward tiers unlocked as referral customers complete visits.</p>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                {stages.map((s, i) => (
+                                    <div key={i} style={{ padding: '16px', backgroundColor: '#F7F9FF', borderRadius: '12px', border: '1px solid #E0E8FF', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                            <span style={{ fontSize: '12px', fontWeight: '700', color: '#162860', backgroundColor: '#E0E8FF', padding: '3px 10px', borderRadius: '20px' }}>Stage {s.stage_number}</span>
+                                            <button onClick={() => removeStage(i)} style={{ padding: '4px 8px', backgroundColor: '#FFF0F0', color: '#D0021B', border: 'none', borderRadius: '6px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}>✕ Remove</button>
+                                        </div>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '12px' }}>
+                                            <div>
+                                                <label style={labelStyle}>Referral Visits Required</label>
+                                                <input style={inputStyle}
+                                                    value={s.bmw_visits_required}
+                                                    onChange={e => {
+                                                        let val = e.target.value.replace(/\D/g, '');
+                                                        if (val && Number(val) > 9999) val = '9999';
+                                                        updateStage(i, { bmw_visits_required: Number(val) || 1 });
+                                                    }} />
+                                            </div>
                                             <div>
                                                 <label style={labelStyle}>Reward Label</label>
                                                 <input style={inputStyle}
-                                                  value={s.reward_label}
-                                                  onChange={e => {
-                                                      let val = e.target.value.replace(/[<>]/g, '');
-                                                      if (val.length > 100) val = val.slice(0, 100);
-                                                      updateStage(i, { reward_label: val });
-                                                  }}
-                                                  onBlur={() => updateStage(i, { reward_label: s.reward_label.trim() })}
-                                                  placeholder="e.g. 20% Labour Discount" />
+                                                    value={s.reward_label}
+                                                    onChange={e => {
+                                                        let val = e.target.value.replace(/[<>]/g, '');
+                                                        if (val.length > 100) val = val.slice(0, 100);
+                                                        updateStage(i, { reward_label: val });
+                                                    }}
+                                                    onBlur={() => updateStage(i, { reward_label: s.reward_label.trim() })}
+                                                    placeholder="e.g. 20% Labour Discount" />
                                             </div>
                                         </div>
                                         <div>
                                             <label style={labelStyle}>Reward Description (optional)</label>
                                             <input style={inputStyle}
-                                              value={s.reward_description}
-                                              onChange={e => {
-                                                  let val = e.target.value.replace(/[<>]/g, '');
-                                                  if (val.length > 500) val = val.slice(0, 500);
-                                                  updateStage(i, { reward_description: val });
-                                              }}
-                                              onBlur={() => updateStage(i, { reward_description: s.reward_description.trim() })}
-                                              placeholder="Additional details about this reward" />
+                                                value={s.reward_description}
+                                                onChange={e => {
+                                                    let val = e.target.value.replace(/[<>]/g, '');
+                                                    if (val.length > 500) val = val.slice(0, 500);
+                                                    updateStage(i, { reward_description: val });
+                                                }}
+                                                onBlur={() => updateStage(i, { reward_description: s.reward_description.trim() })}
+                                                placeholder="Additional details about this reward" />
                                         </div>
-                                     </div>
-                                 ))}
-                                 <button onClick={addStage} style={{ padding: '10px', backgroundColor: '#F0F4FF', color: '#162860', border: '1.5px dashed #0074BD', borderRadius: '10px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>+ Add Stage</button>
-                             </div>
-                         </>
-                     )}
+                                    </div>
+                                ))}
+                                <button onClick={addStage} style={{ padding: '10px', backgroundColor: '#F0F4FF', color: '#162860', border: '1.5px dashed #0074BD', borderRadius: '10px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>+ Add Stage</button>
+                            </div>
+                        </>
+                    )}
 
                     {activeTab === 'WhatsApp' && (
-                         <>
-                             <SectionHeader title="WhatsApp Message Templates" />
-                             <p style={hintStyle}>Pre-filled messages sent at each trigger point. Click placeholders to insert at cursor.</p>
-                             <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-                                 {waTemplates.map(t => (
-                                     <div key={t.trigger_type} style={{ padding: '20px', backgroundColor: '#F7F9FF', borderRadius: '12px', border: '1px solid #E0E8FF' }}>
-                                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-                                             <span style={{ fontSize: '18px' }}>📲</span>
-                                             <p style={{ fontSize: '13px', fontWeight: '700', color: '#162860', margin: 0 }}>{WA_TRIGGER_LABELS[t.trigger_type]}</p>
-                                         </div>
-                                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
-                                             {WA_TRIGGER_VARIABLES[t.trigger_type].map(ph => (
-                                                 <span key={ph} onClick={() => {
-                                                     const textarea = document.getElementById(`wa-${t.trigger_type}`) as HTMLTextAreaElement
-                                                     if (!textarea) return
-                                                     const start = textarea.selectionStart
-                                                     const end = textarea.selectionEnd
-                                                     const updated = t.message_body.substring(0, start) + ph + t.message_body.substring(end)
-                                                     updateWaTemplate(t.trigger_type, updated)
-                                                     setTimeout(() => { textarea.focus(); textarea.setSelectionRange(start + ph.length, start + ph.length) }, 0)
-                                                 }} style={{ padding: '3px 8px', backgroundColor: '#EEF2FF', color: '#162860', borderRadius: '4px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', fontFamily: 'monospace' }}>{ph}</span>
-                                             ))}
-                                         </div>
-                                         <textarea id={`wa-${t.trigger_type}`}
-                                           style={{ ...inputStyle, height: '140px', resize: 'vertical', fontFamily: 'inherit', fontSize: '13px' }}
-                                           value={t.message_body}
-                                           onChange={e => {
-                                               let val = e.target.value.replace(/[<>]/g, '');
-                                               if (val.length > 2000) val = val.slice(0, 2000);
-                                               updateWaTemplate(t.trigger_type, val);
-                                           }}
-                                           onBlur={() => updateWaTemplate(t.trigger_type, t.message_body.trim())}
-                                           placeholder="Type your WhatsApp message here." />
-                                         <p style={{ ...hintStyle, marginTop: '6px' }}>{t.message_body.length} characters</p>
-                                     </div>
-                                 ))}
-                             </div>
-                         </>
-                     )}
+                        <>
+                            <SectionHeader title="WhatsApp Message Templates" />
+                            <p style={hintStyle}>Pre-filled messages sent at each trigger point. Click placeholders to insert at cursor.</p>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                                {waTemplates.map(t => (
+                                    <div key={t.trigger_type} style={{ padding: '20px', backgroundColor: '#F7F9FF', borderRadius: '12px', border: '1px solid #E0E8FF' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                                            <span style={{ fontSize: '18px' }}>📲</span>
+                                            <p style={{ fontSize: '13px', fontWeight: '700', color: '#162860', margin: 0 }}>{WA_TRIGGER_LABELS[t.trigger_type]}</p>
+                                        </div>
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
+                                            {WA_TRIGGER_VARIABLES[t.trigger_type].map(ph => (
+                                                <span key={ph} onClick={() => {
+                                                    const textarea = document.getElementById(`wa-${t.trigger_type}`) as HTMLTextAreaElement
+                                                    if (!textarea) return
+                                                    const start = textarea.selectionStart
+                                                    const end = textarea.selectionEnd
+                                                    const updated = t.message_body.substring(0, start) + ph + t.message_body.substring(end)
+                                                    updateWaTemplate(t.trigger_type, updated)
+                                                    setTimeout(() => { textarea.focus(); textarea.setSelectionRange(start + ph.length, start + ph.length) }, 0)
+                                                }} style={{ padding: '3px 8px', backgroundColor: '#EEF2FF', color: '#162860', borderRadius: '4px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', fontFamily: 'monospace' }}>{ph}</span>
+                                            ))}
+                                        </div>
+                                        <textarea id={`wa-${t.trigger_type}`}
+                                            style={{ ...inputStyle, height: '140px', resize: 'vertical', fontFamily: 'inherit', fontSize: '13px' }}
+                                            value={t.message_body}
+                                            onChange={e => {
+                                                let val = e.target.value.replace(/[<>]/g, '');
+                                                if (val.length > 2000) val = val.slice(0, 2000);
+                                                updateWaTemplate(t.trigger_type, val);
+                                            }}
+                                            onBlur={() => updateWaTemplate(t.trigger_type, t.message_body.trim())}
+                                            placeholder="Type your WhatsApp message here." />
+                                        <p style={{ ...hintStyle, marginTop: '6px' }}>{t.message_body.length} characters</p>
+                                    </div>
+                                ))}
+                            </div>
+                        </>
+                    )}
 
                     <Divider />
                     <div style={{ display: 'flex', gap: '12px', justifyContent: 'space-between', alignItems: 'center' }}>

@@ -19,9 +19,9 @@ import {
 interface Offer {
     id: string
     title: string
-    is_active: boolean
+    is_active: boolean | null
     coupon_cap: number | null
-    visited_count: number
+    visited_count: number | null
     commission_amount: number | null
     issuance_start_date: string | null
     issuance_end_date: string | null
@@ -32,22 +32,22 @@ interface Offer {
 
 interface Coupon {
     id: string
-    coupon_type: string
-    stage: number
-    issue_date: string
+    coupon_type: string | null
+    stage: number | null
+    issue_date: string | null
     advisor_name: string | null
     advisor_code: string | null
     issued_by: string | null
-    status: string
+    status: string | null
 }
 
 interface Appointment {
     id: string
-    coupon_id: string
+    coupon_id: string | null
     status: string
-    appointment_date: string
+    appointment_date: string | null
     sub_offer_name: string | null
-    created_at: string
+    created_at: string | null
 }
 
 interface AdvisorStat {
@@ -60,7 +60,7 @@ interface AdvisorStat {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function formatDate(dateStr: string): string {
+function formatDate(dateStr: string | null): string {
   if (!dateStr) return '—'
   const d = new Date(dateStr)
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })
@@ -142,8 +142,10 @@ export default function OfferReportPage() {
 
         // Auto-set date range from data
         if (couponData && couponData.length > 0) {
-            setDateFrom(couponData[0].issue_date.split('T')[0])
-            setDateTo(couponData[couponData.length - 1].issue_date.split('T')[0])
+            const first = couponData[0].issue_date
+            const last = couponData[couponData.length - 1].issue_date
+            if (first) setDateFrom(first.split('T')[0])
+            if (last) setDateTo(last.split('T')[0])
         }
 
         setLoading(false)
@@ -154,6 +156,7 @@ export default function OfferReportPage() {
     const filteredCoupons = useMemo(() => {
         if (!dateFrom && !dateTo) return coupons
         return coupons.filter(c => {
+            if (!c.issue_date) return false
             const d = c.issue_date.split('T')[0]
             if (dateFrom && d < dateFrom) return false
             if (dateTo && d > dateTo) return false
@@ -165,6 +168,7 @@ export default function OfferReportPage() {
         if (!dateFrom && !dateTo) return appointments
         return appointments.filter(a => {
             const d = a.appointment_date
+            if (!d) return false
             if (dateFrom && d < dateFrom) return false
             if (dateTo && d > dateTo) return false
             return true
@@ -180,10 +184,10 @@ export default function OfferReportPage() {
 
     // Stage funnel
     const stageFunnel = [
-        { name: 'Stage 0 (No visits)', value: loyaltyCoupons.filter(c => c.stage === 0).length, fill: '#E0E0E0' },
-        { name: 'Stage 1', value: loyaltyCoupons.filter(c => c.stage >= 1).length, fill: '#0074BD' },
-        { name: 'Stage 2', value: loyaltyCoupons.filter(c => c.stage >= 2).length, fill: '#7c3aed' },
-        { name: 'Stage 3', value: loyaltyCoupons.filter(c => c.stage >= 3).length, fill: '#16a34a' },
+        { name: 'Stage 0 (No visits)', value: loyaltyCoupons.filter(c => (c.stage || 0) === 0).length, fill: '#E0E0E0' },
+        { name: 'Stage 1', value: loyaltyCoupons.filter(c => (c.stage || 0) >= 1).length, fill: '#0074BD' },
+        { name: 'Stage 2', value: loyaltyCoupons.filter(c => (c.stage || 0) >= 2).length, fill: '#7c3aed' },
+        { name: 'Stage 3', value: loyaltyCoupons.filter(c => (c.stage || 0) >= 3).length, fill: '#16a34a' },
     ]
 
     // Issuance over time
@@ -195,8 +199,14 @@ export default function OfferReportPage() {
     }, [granularity, dateFrom, dateTo])
 
     const issuanceChart = useMemo(() => {
-        const loyaltyMap = groupByPeriod(loyaltyCoupons.map(c => ({ date: c.issue_date })), effectiveGranularity)
-        const referralMap = groupByPeriod(referralCoupons.map(c => ({ date: c.issue_date })), effectiveGranularity)
+        const loyaltyMap = groupByPeriod(
+            loyaltyCoupons.filter(c => c.issue_date !== null).map(c => ({ date: c.issue_date as string })),
+            effectiveGranularity
+        )
+        const referralMap = groupByPeriod(
+            referralCoupons.filter(c => c.issue_date !== null).map(c => ({ date: c.issue_date as string })),
+            effectiveGranularity
+        )
         const allKeys = Array.from(new Set([...Object.keys(loyaltyMap), ...Object.keys(referralMap)])).sort()
         return allKeys.map(k => ({
             date: effectiveGranularity === 'weekly'
@@ -210,7 +220,7 @@ export default function OfferReportPage() {
     // Appointments over time
     const apptChart = useMemo(() => {
         const visitedMap = groupByPeriod(
-            visited.map(a => ({ date: a.appointment_date })),
+            visited.filter(a => a.appointment_date !== null).map(a => ({ date: a.appointment_date as string })),
             effectiveGranularity
         )
         const allKeys = Object.keys(visitedMap).sort()
@@ -295,7 +305,7 @@ export default function OfferReportPage() {
         )
     }
 
-    const capPct = offer.coupon_cap ? Math.min((offer.visited_count / offer.coupon_cap) * 100, 100) : null
+    const capPct = offer.coupon_cap ? Math.min(((offer.visited_count || 0) / offer.coupon_cap) * 100, 100) : null
 
     return (
         <div style={{ minHeight: '100vh', backgroundColor: '#F7F7F7', paddingTop: '16px' }}>
@@ -363,12 +373,12 @@ export default function OfferReportPage() {
                         { label: 'Total Issued', value: String(filteredCoupons.length), color: '#162860' },
                         { label: (offer.loyalty_brand || 'Loyalty') + ' Coupons', value: String(loyaltyCoupons.length), color: '#162860' },
                         { label: (offer.referral_brand || 'Referral') + ' Coupons', value: String(referralCoupons.length), color: '#0074BD' },
-                        { label: 'Visited', value: String(visited.length), color: '#16a34a' },
+                        { label: 'Invoiced', value: String(visited.length), color: '#16a34a' },
                         { label: 'Appointments', value: String(filteredAppts.length), color: '#f59e0b' },
                         { label: 'Commission Earned', value: `AED ${commission.toLocaleString()}`, color: '#16a34a' },
-                        { label: 'Stage 1+ Reached', value: String(loyaltyCoupons.filter(c => c.stage >= 1).length), color: '#0074BD' },
-                        { label: 'Stage 2+ Reached', value: String(loyaltyCoupons.filter(c => c.stage >= 2).length), color: '#7c3aed' },
-                        { label: 'Stage 3 Reached', value: String(loyaltyCoupons.filter(c => c.stage >= 3).length), color: '#16a34a' },
+                        { label: 'Stage 1+ Reached', value: String(loyaltyCoupons.filter(c => (c.stage || 0) >= 1).length), color: '#0074BD' },
+                        { label: 'Stage 2+ Reached', value: String(loyaltyCoupons.filter(c => (c.stage || 0) >= 2).length), color: '#7c3aed' },
+                        { label: 'Stage 3 Reached', value: String(loyaltyCoupons.filter(c => (c.stage || 0) >= 3).length), color: '#16a34a' },
                     ].map(s => (
                         <div key={s.label} style={{ backgroundColor: '#FFFFFF', borderRadius: '14px', padding: '16px 18px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', borderLeft: `3px solid ${s.color}` }}>
                             <p style={{ fontSize: '11px', color: '#888', fontWeight: '500', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{s.label}</p>
@@ -383,7 +393,7 @@ export default function OfferReportPage() {
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
                             <span style={{ fontSize: '13px', fontWeight: '600', color: '#1A1A1A' }}>Cap Utilisation</span>
                             <span style={{ fontSize: '13px', fontWeight: '700', color: capPct >= 90 ? '#D0021B' : '#1A1A1A' }}>
-                                {offer.visited_count} / {offer.coupon_cap} ({capPct.toFixed(1)}%)
+                                {offer.visited_count || 0} / {offer.coupon_cap} ({capPct.toFixed(1)}%)
                             </span>
                         </div>
                         <div style={{ height: '10px', backgroundColor: '#E0E0E0', borderRadius: '100px', overflow: 'hidden' }}>
@@ -422,8 +432,8 @@ export default function OfferReportPage() {
 
                     {/* Visits over time */}
                     <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-                        <h3 style={{ fontSize: '14px', fontWeight: '700', color: '#1A1A1A', margin: '0 0 4px' }}>{(offer.referral_brand || 'Referral') + ' Visits Over Time'}</h3>
-                        <p style={{ fontSize: '12px', color: '#888', margin: '0 0 16px' }}>Completed visits per {effectiveGranularity === 'weekly' ? 'week' : 'day'}</p>
+                        <h3 style={{ fontSize: '14px', fontWeight: '700', color: '#1A1A1A', margin: '0 0 4px' }}>{(offer.referral_brand || 'Referral') + ' Invoiced Over Time'}</h3>
+                        <p style={{ fontSize: '12px', color: '#888', margin: '0 0 16px' }}>Completed invoices per {effectiveGranularity === 'weekly' ? 'week' : 'day'}</p>
                         {apptChart.length === 0 ? (
                             <div style={{ textAlign: 'center', padding: '40px', color: '#888', fontSize: '13px' }}>No visits in selected range</div>
                         ) : (
@@ -474,7 +484,12 @@ export default function OfferReportPage() {
                                     <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F0" horizontal={false} />
                                     <XAxis type="number" tick={{ fontSize: 11, fill: '#888' }} allowDecimals={false} />
                                     <YAxis dataKey="status" type="category" tick={{ fontSize: 11, fill: '#888' }} width={90}
-                                        tickFormatter={v => v.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())} />
+                                        tickFormatter={v => {
+                                            if (v === 'scheduled') return 'Scheduled';
+                                            if (v === 'customer_not_reachable' || v === 'follow_up_confirmed') return 'Follow-up';
+                                            if (v === 'visited') return 'Invoiced';
+                                            return v.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
+                                        }} />
                                     <Tooltip contentStyle={{ fontSize: '12px', borderRadius: '8px', border: '1px solid #E0E0E0' }}
                                         formatter={(v: any) => [v, 'Count']} />
                                     <Bar dataKey="count" name="Count" fill="#0074BD" radius={[0, 3, 3, 0]} />
@@ -512,7 +527,7 @@ export default function OfferReportPage() {
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                 <thead>
                                     <tr style={{ backgroundColor: '#F7F7F7', borderBottom: '1px solid #E0E0E0' }}>
-                                        {['Rank', 'Advisor', 'Code', 'Coupons Issued', (offer.referral_brand || 'Referral') + ' Visits', 'Commission Earned'].map(h => (
+                                        {['Rank', 'Advisor', 'Code', 'Coupons Issued', (offer.referral_brand || 'Referral') + ' Invoiced', 'Commission Earned'].map(h => (
                                             <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontSize: '11px', fontWeight: '700', color: '#666', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</th>
                                         ))}
                                     </tr>
