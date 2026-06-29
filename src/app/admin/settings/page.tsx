@@ -53,11 +53,17 @@ export default function AdminSettingsPage() {
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) { router.push('/login'); return }
 
-        const { data: profileData } = await supabase
-            .from('profiles')
-            .select('user_role, is_active')
-            .eq('id', user.id)
-            .single<{ user_role: string; is_active: boolean | null }>()
+        const [profileResult, _vars, _emirates] = await Promise.all([
+            supabase
+                .from('profiles')
+                .select('user_role, is_active')
+                .eq('id', user.id)
+                .single<{ user_role: string; is_active: boolean | null }>(),
+            loadVariables(),
+            loadEmirates()
+        ])
+
+        const { data: profileData } = profileResult
 
         if (!profileData) {
             router.push('/login')
@@ -76,7 +82,6 @@ export default function AdminSettingsPage() {
             return
         }
 
-        await Promise.all([loadVariables(), loadEmirates()])
         setPageLoading(false)
     }
 

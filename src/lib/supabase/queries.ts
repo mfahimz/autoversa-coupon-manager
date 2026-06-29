@@ -44,7 +44,7 @@ export const getTemplates = async () => {
  */
 export const getTemplate = async (id: string) => {
   const supabase = createClient()
-  const { data } = await supabase.from('templates').select('*').eq('id', id).single()
+  const { data } = await supabase.from('templates').select('id, file_url, font_family, text_color').eq('id', id).single()
   return data
 }
 
@@ -53,7 +53,7 @@ export const getTemplate = async (id: string) => {
  */
 export const getTemplatePositions = async (templateId: string) => {
   const supabase = createClient()
-  const { data } = await supabase.from('template_variable_positions').select('*').eq('template_id', templateId)
+  const { data } = await supabase.from('template_variable_positions').select('id, variable_key, x_coordinate, y_coordinate, font_size, font_color, font_weight').eq('template_id', templateId)
   return data || []
 }
 

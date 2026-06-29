@@ -25,9 +25,7 @@ interface OfferSummary {
   loyalty_issued: number
   referral_issued: number
   actual_visited: number
-  stage1_count: number
-  stage2_count: number
-  stage3_count: number
+  stageCounts: { stage_number: number; count: bigint | number }[]
 }
 
 
@@ -44,6 +42,7 @@ export default function ReportingPage() {
   const [offers, setOffers] = useState<OfferSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [profile, setProfile] = useState<any>(null)
+  const [stageLabelsMap, setStageLabelsMap] = useState<Map<string, Map<number, string>>>(new Map())
 
   useEffect(() => { loadData() }, [])
 
@@ -52,8 +51,15 @@ export default function ReportingPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
 
-    const { data: profileData } = await supabase
-      .from('profiles').select('user_role, is_active').eq('id', user.id).single()
+    const [profileResult, offersResult, summariesResult, stageCountsResult, offerStagesResult] = await Promise.all([
+      supabase.from('profiles').select('user_role, is_active').eq('id', user.id).single(),
+      supabase.from('offers').select('id, title, is_active, coupon_cap, visited_count, commission_amount, issuance_start_date, issuance_end_date, loyalty_brand, referral_brand').order('created_at', { ascending: false }),
+      (supabase as any).rpc('get_offer_summaries'),
+      (supabase as any).rpc('get_offer_stage_counts'),
+      supabase.from('offer_stages').select('offer_id, stage_number, reward_label').order('stage_number'),
+    ])
+
+    const { data: profileData } = profileResult
     setProfile(profileData)
 
     if (!profileData) { router.push('/login'); return }
@@ -70,46 +76,41 @@ export default function ReportingPage() {
       return
     }
 
-    const { data: offersData } = await supabase
-      .from('offers')
-      .select('id, title, is_active, coupon_cap, visited_count, commission_amount, issuance_start_date, issuance_end_date, loyalty_brand, referral_brand')
-      .order('created_at', { ascending: false })
-
+    const { data: offersData } = offersResult
     if (!offersData) { setLoading(false); return }
 
-    const offerIds = offersData.map(o => o.id)
+    const { data: summaryRows } = summariesResult
+    const summaryMap = new Map<string, any>((summaryRows || []).map((s: any) => [s.offer_id, s]))
 
-    // Load coupons and appointments in parallel
-    const [{ data: coupons }, { data: appointments }] = await Promise.all([
-      supabase
-        .from('coupons')
-        .select('offer_id, coupon_type, stage')
-        .in('offer_id', offerIds),
-      supabase
-        .from('appointments')
-        .select('offer_id, status')
-        .in('offer_id', offerIds),
-    ])
+    const { data: stageCountRows } = stageCountsResult
+    const stageCountsMap = new Map<string, { stage_number: number; count: number }[]>()
+    ;(stageCountRows || []).forEach((row: any) => {
+      const existing = stageCountsMap.get(row.offer_id) || []
+      existing.push({ stage_number: row.stage_number, count: Number(row.count) })
+      stageCountsMap.set(row.offer_id, existing)
+    })
+
+    const { data: offerStagesData } = offerStagesResult
+    const stageLabelsMapTmp = new Map<string, Map<number, string>>()
+    ;(offerStagesData || []).forEach((row: any) => {
+      if (!stageLabelsMapTmp.has(row.offer_id)) stageLabelsMapTmp.set(row.offer_id, new Map())
+      stageLabelsMapTmp.get(row.offer_id)!.set(row.stage_number, row.reward_label || `Stage ${row.stage_number}`)
+    })
 
     const summaries: OfferSummary[] = offersData.map(offer => {
-      const offerCoupons = (coupons || []).filter(c => c.offer_id === offer.id)
-      const loyaltyCoupons = offerCoupons.filter(c => c.coupon_type === 'LOYALTY')
-      const referralCoupons = offerCoupons.filter(c => c.coupon_type === 'REFERRAL')
-      const offerAppts = (appointments || []).filter(a => a.offer_id === offer.id)
-      const actualVisited = offerAppts.filter(a => a.status === 'visited').length
-
+      const s = summaryMap.get(offer.id)
+      const stages = (stageCountsMap.get(offer.id) || []).sort((a, b) => a.stage_number - b.stage_number)
       return {
         ...offer,
-        total_issued: offerCoupons.length,
-        loyalty_issued: loyaltyCoupons.length,
-        referral_issued: referralCoupons.length,
-        actual_visited: actualVisited,
-        stage1_count: loyaltyCoupons.filter(c => (c.stage || 0) >= 1).length,
-        stage2_count: loyaltyCoupons.filter(c => (c.stage || 0) >= 2).length,
-        stage3_count: loyaltyCoupons.filter(c => (c.stage || 0) >= 3).length,
+        total_issued: Number(s?.total_issued) || 0,
+        loyalty_issued: Number(s?.loyalty_issued) || 0,
+        referral_issued: Number(s?.referral_issued) || 0,
+        actual_visited: Number(s?.actual_visited) || 0,
+        stageCounts: stages,
       }
     })
 
+    setStageLabelsMap(stageLabelsMapTmp)
     setOffers(summaries)
     setLoading(false)
   }
@@ -186,11 +187,9 @@ export default function ReportingPage() {
                       { label: 'Total Issued', value: String(offer.total_issued), color: '#162860' },
                       { label: (offer.loyalty_brand || 'Loyalty') + ' Coupons', value: String(offer.loyalty_issued), color: '#162860' },
                       { label: (offer.referral_brand || 'Referral') + ' Coupons', value: String(offer.referral_issued), color: '#0074BD' },
-                      { label: 'Visited', value: offer.coupon_cap ? `${offer.actual_visited} / ${offer.coupon_cap}` : String(offer.actual_visited), color: '#16a34a' },
+                      { label: 'Invoiced', value: offer.coupon_cap ? `${offer.actual_visited} / ${offer.coupon_cap}` : String(offer.actual_visited), color: '#16a34a' },
                       { label: 'Commission', value: `AED ${commissionEarned.toLocaleString()}`, color: '#f59e0b' },
-                      { label: 'Stage 1+', value: String(offer.stage1_count), color: '#0074BD' },
-                      { label: 'Stage 2+', value: String(offer.stage2_count), color: '#7c3aed' },
-                      { label: 'Stage 3', value: String(offer.stage3_count), color: '#16a34a' },
+                      { label: 'Conversion Rate', value: offer.loyalty_issued > 0 ? ((offer.actual_visited / offer.loyalty_issued) * 100).toFixed(1) + '%' : '—', color: '#0074BD' },
                     ].map(s => (
                       <div key={s.label} style={{ backgroundColor: '#F7F7F7', borderRadius: '10px', padding: '10px 12px' }}>
                         <p style={{ fontSize: '11px', color: '#888', margin: '0 0 3px', fontWeight: '500' }}>{s.label}</p>
@@ -198,6 +197,24 @@ export default function ReportingPage() {
                       </div>
                     ))}
                   </div>
+
+                  {/* Dynamic stage breakdown section */}
+                  {offer.stageCounts.length > 0 && (
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #F0F0F0', marginBottom: '16px' }}>
+                      {offer.stageCounts.map((sc, idx) => {
+                        const colors = ['#0074BD', '#7c3aed', '#16a34a', '#f59e0b', '#D0021B']
+                        const color = colors[(sc.stage_number - 1) % colors.length]
+                        const label = stageLabelsMap.get(offer.id)?.get(sc.stage_number) || `Stage ${sc.stage_number}`
+                        return (
+                          <div key={sc.stage_number} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '5px 12px', borderRadius: '100px', backgroundColor: `${color}15`, border: `1px solid ${color}30` }}>
+                            <div style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: color, flexShrink: 0 }} />
+                            <span style={{ fontSize: '11px', fontWeight: '700', color }}>{sc.count}</span>
+                            <span style={{ fontSize: '11px', color: '#666' }}>{label}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
 
                   {/* Cap progress bar */}
                   {capPct !== null && (

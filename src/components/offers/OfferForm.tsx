@@ -151,6 +151,7 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
     const supabase = createClient()
     const mImageContainerRef = useRef<HTMLDivElement>(null)
     const bImageContainerRef = useRef<HTMLDivElement>(null)
+    const templatePositionsLoadedRef = useRef(false)
 
     const [activeTab, setActiveTab] = useState<Tab>('Details')
     const [visitedTabs, setVisitedTabs] = useState<Set<Tab>>(new Set<Tab>(['Details']))
@@ -227,16 +228,21 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
 
     useEffect(() => {
         if (mode === 'edit' && initialData?.id) {
-            loadExistingTemplates(initialData.id)
+            loadExistingTemplates(initialData.id).then(() => {
+                templatePositionsLoadedRef.current = true
+            })
             loadSubOffers(initialData.id)
             loadStages(initialData.id)
             loadWaTemplates(initialData.id)
             setVisitedTabs(new Set(TABS))
+        } else {
+            templatePositionsLoadedRef.current = true
         }
     }, [mode, initialData?.id])
 
     // Stable dependency via JSON.stringify — prevents infinite re-render from array reference churn
     useEffect(() => {
+        if (!templatePositionsLoadedRef.current) return
         const vars = Array.isArray(form.offer_variables) ? form.offer_variables : []
         setMTemplate(prev => ({ ...prev, variablePositions: prev.variablePositions.filter(p => vars.includes(p.key)) }))
         setBTemplate(prev => ({ ...prev, variablePositions: prev.variablePositions.filter(p => vars.includes(p.key)) }))
@@ -258,15 +264,15 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
             .eq('offer_id', offerId)
             .eq('is_active', true)
         if (!templates) return
+
         for (const template of templates) {
-            // TODO: templates.coupon_type still uses M/B — migration deferred
             const setter = template.coupon_type === 'M' ? setMTemplate : setBTemplate
             const { data: positions } = await supabase
                 .from('template_variable_positions')
                 .select('*')
                 .eq('template_id', template.id)
-            setter(prev => ({
-                ...prev,
+            setter(_ => ({
+                imageFile: null,
                 existingTemplateId: template.id,
                 existingTemplateUrl: template.file_url,
                 imagePreview: template.file_url,
@@ -277,10 +283,18 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                     key: p.variable_key,
                     x: Number(p.x_coordinate),
                     y: Number(p.y_coordinate),
-                    font_size: p.font_size || 16,
+                    font_size: (() => {
+                        const raw = p.font_size || 16
+                        const imgH = template.image_height || 900
+                        // If raw > 20, assume legacy absolute px — convert to percentage
+                        return raw > 20 ? Math.round((raw / imgH) * 100 * 10) / 10 : raw
+                    })(),
                     font_color: p.font_color || '#000000',
                     font_weight: p.font_weight || 'normal',
                 })) : [],
+                selectedVariableKey: null,
+                draggingKey: null,
+                previewMode: false,
             }))
         }
     }
@@ -314,6 +328,7 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
         setTimeout(() => setToast(null), 4000)
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     function goToTab(tab: Tab) {
         setActiveTab(tab)
         setVisitedTabs(prev => { const s = new Set<Tab>(prev); s.add(tab); return s })
@@ -356,11 +371,12 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
             const existing = prev.variablePositions.find(p => p.key === key)
             const newPositions = existing
                 ? prev.variablePositions.map(p => p.key === key ? { ...p, ...updates } : p)
-                : [...prev.variablePositions, { key, x: 50, y: 50, font_size: 16, font_color: '#000000', font_weight: 'normal', ...updates }]
+                : [...prev.variablePositions, { key, x: 50, y: 50, font_size: 2, font_color: '#000000', font_weight: 'normal', ...updates }]
             return { ...prev, variablePositions: newPositions }
         })
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     function handleImageDrop(
         e: React.DragEvent<HTMLDivElement>,
         ref: React.RefObject<HTMLDivElement>,
@@ -561,7 +577,8 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
         if (tState.imageFile) {
             const ext = tState.imageFile.name.split('.').pop()
             const path = `templates/${offerId}/template_${couponType.toLowerCase()}.${ext}`
-            const { error: uploadError } = await supabase.storage.from('templates').upload(path, tState.imageFile, { upsert: true })
+            await supabase.storage.from('templates').remove([path])
+            const { error: uploadError } = await supabase.storage.from('templates').upload(path, tState.imageFile)
             if (uploadError) {
                 showToast(`Failed to upload ${couponType === 'M' ? 'Loyalty' : 'Referral'} template image`, 'error')
                 return false
@@ -599,6 +616,22 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
             if (data) templateId = data.id
         }
         if (!templateId) return false
+
+        // Delete all OTHER template rows for this offer + coupon_type (not the current one)
+        const { data: oldTemplates } = await supabase
+            .from('templates')
+            .select('id')
+            .eq('offer_id', offerId)
+            .eq('coupon_type', couponType)
+            .neq('id', templateId)
+
+        if (oldTemplates && oldTemplates.length > 0) {
+            const oldIds = oldTemplates.map((t: any) => t.id)
+            await supabase.from('template_variable_positions').delete().in('template_id', oldIds)
+            await supabase.from('templates').delete().in('id', oldIds)
+        }
+
+        // Then proceed with existing variable positions delete/insert for current templateId
         await supabase.from('template_variable_positions').delete().eq('template_id', templateId)
         if (tState.variablePositions.length > 0) {
             const { error } = await supabase.from('template_variable_positions').insert(
@@ -621,6 +654,7 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
     }
 
     async function saveSubOffers(offerId: string) {
+        await supabase.from('appointments').update({ sub_offer_id: null, sub_offer_name: null }).eq('offer_id', offerId)
         await supabase.from('sub_offers').delete().eq('offer_id', offerId)
         const valid = subOffers.filter(s => s.name.trim())
         if (!valid.length) return
@@ -664,9 +698,13 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
         tState: TemplateState,
         setter: React.Dispatch<React.SetStateAction<TemplateState>>,
         containerRef: React.RefObject<HTMLDivElement>,
+        templateType: 'loyalty' | 'referral',
     ) {
         const selectedVarConfig = tState.selectedVariableKey ? availableVariables.find(v => v.key === tState.selectedVariableKey) : null
         const selectedVarPosition = tState.selectedVariableKey ? getPositionForKey(tState.variablePositions, tState.selectedVariableKey) : null
+        const previewImageHeight = tState.imageDimensions
+            ? Math.min(900, tState.imageDimensions.width) / tState.imageDimensions.width * tState.imageDimensions.height
+            : 900
 
         return (
             <div style={{ border: `2px solid ${accentColor}20`, borderRadius: '16px', padding: '24px', backgroundColor: `${accentColor}05` }}>
@@ -701,7 +739,7 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                                     const varConfig = availableVariables.find(v => v.key === key)
                                     if (!varConfig) return null
                                     return (
-                                        <div key={`${accentColor}-${key}`} draggable
+                                        <div key={`${templateType}-${key}`} draggable
                                             onDragStart={() => setter(prev => ({ ...prev, draggingKey: key }))}
                                             style={{ padding: '5px 10px', backgroundColor: accentColor, color: '#FFFFFF', borderRadius: '6px', fontSize: '12px', fontWeight: '600', cursor: 'grab', userSelect: 'none' }}>
                                             ⠿ {varConfig.label}
@@ -751,7 +789,7 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                                 if (!varConfig) return null
                                 const isSelected = tState.selectedVariableKey === pos.key
                                 return (
-                                    <div key={pos.key} draggable
+                                    <div key={`${templateType}-pin-${pos.key}`} draggable
                                         onDragStart={e => { e.stopPropagation(); setter(prev => ({ ...prev, draggingKey: pos.key })) }}
                                         onClick={e => { e.stopPropagation(); setter(prev => ({ ...prev, selectedVariableKey: isSelected ? null : pos.key })) }}
                                         style={{ position: 'absolute', left: `${pos.x}%`, top: `${pos.y}%`, transform: 'translate(-50%, -50%)', cursor: 'grab', userSelect: 'none', zIndex: 10, display: 'flex', alignItems: 'center', gap: '3px' }}>
@@ -775,7 +813,7 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                                 const isSelected = tState.selectedVariableKey === pos.key
                                 return (
                                     <div
-                                        key={pos.key}
+                                        key={`${templateType}-preview-${pos.key}`}
                                         draggable
                                         onDragStart={e => {
                                             e.stopPropagation()
@@ -790,7 +828,7 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                                             left: `${pos.x}%`,
                                             top: `${pos.y}%`,
                                             transform: 'translate(-50%, -50%)',
-                                            fontSize: `${pos.font_size}px`,
+                                            fontSize: `${Math.round((pos.font_size || 2) / 100 * previewImageHeight)}px`,
                                             fontWeight: pos.font_weight,
                                             color: pos.font_color,
                                             whiteSpace: 'nowrap',
@@ -838,9 +876,9 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                                         </>
                                     )}
                                     <div>
-                                        <label style={labelStyle}>Font Size (px)</label>
-                                        <input style={inputStyle} type="number" min="8" max="120"
-                                            value={selectedVarPosition?.font_size || 16}
+                                        <label style={labelStyle}>Font Size (% of image height)</label>
+                                        <input style={inputStyle} type="number" min="0.5" max="20" step="0.1"
+                                            value={selectedVarPosition?.font_size || 2}
                                             onChange={e => updatePosition(setter, tState.selectedVariableKey!, { font_size: Number(e.target.value) })} />
                                     </div>
                                     <div>
@@ -1276,7 +1314,7 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                             <Divider />
                             <SectionHeader title="Coupon Print Variables" />
                             <p style={{ ...hintStyle, marginBottom: '14px' }}>
-                                Select what gets printed on each coupon. Manage variables in{' '}
+                                Selected what gets printed on each coupon. Manage variables in{' '}
                                 <span onClick={() => router.push('/admin/settings')} style={{ color: '#0074BD', cursor: 'pointer' }}>Admin Settings</span>.
                             </p>
                             {availableVariables.length === 0 ? (
@@ -1310,8 +1348,8 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
                                 Use <strong>Pin Mode</strong> to drag variables onto the image. Switch to <strong>Preview and Edit</strong> to see sample values, drag to reposition, and click any text to adjust its styling live.
                             </p>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-                                {renderTemplateEditor(form.loyalty_brand + ' Loyalty Template (Loyalty Coupon)', '#162860', mTemplate, setMTemplate, mImageContainerRef)}
-                                {renderTemplateEditor(form.referral_brand + ' Referral Template (Referral Coupon)', '#0074BD', bTemplate, setBTemplate, bImageContainerRef)}
+                                {renderTemplateEditor(form.loyalty_brand + ' Loyalty Template (Loyalty Coupon)', '#162860', mTemplate, setMTemplate, mImageContainerRef, 'loyalty')}
+                                {renderTemplateEditor(form.referral_brand + ' Referral Template (Referral Coupon)', '#0074BD', bTemplate, setBTemplate, bImageContainerRef, 'referral')}
                             </div>
                         </>
                     )}

@@ -17,24 +17,24 @@ interface Appointment {
   appointment_number: string
   coupon_id: string | null
   coupon_code: string
-  vehicle_make: string | null
+  vehicle_make?: string | null
   vehicle_plate: string | null
   vehicle_year: number | null
   appointment_date: string | null
   appointment_time: string | null
-  notes: string | null
+  notes?: string | null
   follow_up_note: string | null
-  booked_by: string | null
-  wa_confirmation_sent: boolean | null
+  booked_by?: string | null
+  wa_confirmation_sent?: boolean | null
   status: string
   reschedule_count: number | null
   not_reachable_count: number | null
   offer_id: string | null
   sub_offer_id: string | null
   sub_offer_name: string | null
-  redeemed_plate: string | null
-  customer_mobile: string | null
-  created_at: string | null
+  redeemed_plate?: string | null
+  customer_mobile?: string | null
+  created_at?: string | null
 }
 
 interface CouponLookup {
@@ -66,8 +66,8 @@ interface EmirateConfig {
   name: string
   code: string
   categories: string[]
-  is_enabled: boolean | null
-  sort_order: number | null
+  is_enabled?: boolean | null
+  sort_order?: number | null
 }
 
 // ─── Status config ────────────────────────────────────────────────────────────
@@ -81,6 +81,8 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }
   visited: { label: 'Visited', color: '#0074BD', bg: '#E8F4FF' },
   cancelled: { label: 'Cancelled', color: '#666666', bg: '#F0F0F0' },
 }
+
+const PAGE_SIZE = 10
 
 // ─── Shared styles ────────────────────────────────────────────────────────────
 
@@ -174,6 +176,7 @@ export default function AppointmentsPage() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
+  const [currentPage, setCurrentPage] = useState(1)
 
   const [errors, setErrors] = useState<Record<string, string>>({})
 
@@ -217,12 +220,24 @@ export default function AppointmentsPage() {
 
   useEffect(() => { init() }, [])
 
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [search, statusFilter])
+
   async function init() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
 
-    const { data: profileData } = await supabase
-      .from('profiles').select('*').eq('id', user.id).single()
+    setLoading(true)
+    const [profileResult, emiratesResult, appointmentsResult] = await Promise.all([
+      supabase.from('profiles').select('user_role, is_active, id').eq('id', user.id).single(),
+      supabase.from('emirates_config').select('id, code, name, categories').eq('is_enabled', true).order('sort_order'),
+      supabase.from('appointments').select('id, appointment_number, coupon_code, vehicle_plate, sub_offer_name, appointment_date, appointment_time, vehicle_year, status, not_reachable_count, reschedule_count, coupon_id, offer_id, sub_offer_id, follow_up_note').order('appointment_date', { ascending: true }).order('appointment_time', { ascending: true })
+    ])
+
+    const { data: profileData } = profileResult
+    const { data: emirateData } = emiratesResult
+    const { data: appointmentsData } = appointmentsResult
 
     if (!profileData) { router.push('/login'); return }
 
@@ -239,27 +254,21 @@ export default function AppointmentsPage() {
     }
 
     setProfile(profileData)
+    setEmirates(emirateData || [])
+    setAppointments(appointmentsData || [])
+    setLoading(false)
 
     if (prefillCoupon) {
       setShowModal(true)
       setCouponCode(prefillCoupon)
     }
-
-    const { data: emirateData } = await supabase
-      .from('emirates_config')
-      .select('*')
-      .eq('is_enabled', true)
-      .order('sort_order')
-
-    setEmirates(emirateData || [])
-    await loadAppointments()
   }
 
   async function loadAppointments() {
     setLoading(true)
     const { data } = await supabase
       .from('appointments')
-      .select('*')
+      .select('id, appointment_number, coupon_code, vehicle_plate, sub_offer_name, appointment_date, appointment_time, vehicle_year, status, not_reachable_count, reschedule_count, coupon_id, offer_id, sub_offer_id, follow_up_note')
       .order('appointment_date', { ascending: true })
       .order('appointment_time', { ascending: true })
     setAppointments(data || [])
@@ -288,6 +297,9 @@ export default function AppointmentsPage() {
     const matchStatus = statusFilter === 'all' || a.status === statusFilter
     return matchSearch && matchStatus
   })
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
+  const paginatedAppointments = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
 
   function getEmirateCategories(emirateCode: string): string[] {
     const em = emirates.find(e => e.code === emirateCode)
@@ -669,12 +681,8 @@ export default function AppointmentsPage() {
 
     if (newStatus === 'visited') {
       if (selectedAppt.coupon_id) {
-        // Mark the REFERRAL coupon as REDEEMED
-        await supabase
-          .from('coupons')
-          .update({ status: 'REDEEMED' })
-          .eq('id', selectedAppt.coupon_id)
-
+        // REFERRAL coupons are never set to REDEEMED via appointment flow
+        // They stay ACTIVE until expiry date passes or manual cancellation
         // Advance the paired LOYALTY coupon stage
         const { error: rpcError, data: rpcResult } = await supabase
           .rpc('advance_m_coupon_stage', { p_b_coupon_id: selectedAppt.coupon_id })
@@ -808,7 +816,7 @@ export default function AppointmentsPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(appt => {
+                {paginatedAppointments.map(appt => {
                   const cfg = STATUS_CONFIG[appt.status] || STATUS_CONFIG.scheduled
                   const isTerminal = appt.status === 'visited' || appt.status === 'cancelled'
                   const isToday = appt.appointment_date === today
@@ -852,6 +860,39 @@ export default function AppointmentsPage() {
             </table>
           )}
         </div>
+
+        {totalPages > 1 && (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '20px 0' }}>
+            <button
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              style={{ padding: '7px 14px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #E0E0E0', borderRadius: '8px', backgroundColor: '#FFFFFF', color: currentPage === 1 ? '#CCC' : '#162860', cursor: currentPage === 1 ? 'not-allowed' : 'pointer' }}
+            >
+              ← Prev
+            </button>
+            {Array.from({ length: totalPages }, (_, i) => i + 1).filter(p => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 2).map((p, idx, arr) => (
+              <span key={p}>
+                {idx > 0 && arr[idx - 1] !== p - 1 && <span style={{ color: '#888', fontSize: '13px', padding: '0 4px' }}>…</span>}
+                <button
+                  onClick={() => setCurrentPage(p)}
+                  style={{ padding: '7px 12px', fontSize: '13px', fontWeight: '600', border: '1.5px solid', borderColor: p === currentPage ? '#0074BD' : '#E0E0E0', borderRadius: '8px', backgroundColor: p === currentPage ? '#0074BD' : '#FFFFFF', color: p === currentPage ? '#FFFFFF' : '#444', cursor: 'pointer', minWidth: '36px' }}
+                >
+                  {p}
+                </button>
+              </span>
+            ))}
+            <button
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages}
+              style={{ padding: '7px 14px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #E0E0E0', borderRadius: '8px', backgroundColor: '#FFFFFF', color: currentPage === totalPages ? '#CCC' : '#162860', cursor: currentPage === totalPages ? 'not-allowed' : 'pointer' }}
+            >
+              Next →
+            </button>
+            <span style={{ fontSize: '12px', color: '#888', marginLeft: '8px' }}>
+              Page {currentPage} of {totalPages}
+            </span>
+          </div>
+        )}
       </main>
 
       {/* ── NEW APPOINTMENT MODAL ── */}

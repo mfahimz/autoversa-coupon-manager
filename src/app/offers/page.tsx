@@ -19,13 +19,17 @@ interface Offer {
   b_redemption_end_date: string | null
   commission_amount: number | null
   is_active: boolean | null
-  coupon_code_structure: string | null
-  offer_variables: string | null
-  coupon_cap: number | null
+  coupon_code_structure?: string | null
+  offer_variables?: string | null
+  coupon_cap?: number | null
   visited_count: number | null
-  created_at: string | null
+  created_at?: string | null
   first_batch_target: number | null
+  loyalty_brand?: string | null
+  referral_brand?: string | null
 }
+
+const PAGE_SIZE = 10
 
 export default function OffersPage() {
   const router = useRouter()
@@ -34,6 +38,7 @@ export default function OffersPage() {
   const [offers, setOffers] = useState<Offer[]>([])
   const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const [currentPage, setCurrentPage] = useState(1)
 
   useEffect(() => { loadOffers() }, [])
 
@@ -42,8 +47,13 @@ export default function OffersPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
 
-    const { data: profileData } = await supabase
-      .from('profiles').select('user_role, is_active').eq('id', user.id).single()
+    const [profileResult, offersResult] = await Promise.all([
+      supabase.from('profiles').select('user_role, is_active').eq('id', user.id).single(),
+      supabase.from('offers').select('id, title, description, offer_identifier, valid_days, b_valid_days, m_redemption_end_date, b_redemption_end_date, commission_amount, visited_count, first_batch_target, is_active, loyalty_brand, referral_brand').order('created_at', { ascending: false })
+    ])
+
+    const { data: profileData } = profileResult
+    const { data } = offersResult
 
     if (!profileData) {
       router.push('/login')
@@ -62,10 +72,6 @@ export default function OffersPage() {
       return
     }
 
-    const { data } = await supabase
-      .from('offers')
-      .select('*')
-      .order('created_at', { ascending: false })
     if (data) setOffers(data)
     setLoading(false)
   }
@@ -84,6 +90,9 @@ export default function OffersPage() {
     showToast(`Offer ${!offer.is_active ? 'activated' : 'deactivated'}`)
     loadOffers()
   }
+
+  const totalPages = Math.ceil(offers.length / PAGE_SIZE)
+  const paginatedOffers = offers.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F7F7F7', paddingTop: '16px' }}>
@@ -175,12 +184,12 @@ export default function OffersPage() {
               </span>
             </div>
           ) : (
-            offers.map((offer, i) => (
+            paginatedOffers.map((offer, i) => (
               <div key={offer.id} style={{
                 display: 'grid',
                 gridTemplateColumns: '2fr 1.5fr 1fr 1fr 1fr 1fr 160px',
                 padding: '16px 24px',
-                borderBottom: i < offers.length - 1 ? '1px solid #F5F5F5' : 'none',
+                borderBottom: i < paginatedOffers.length - 1 ? '1px solid #F5F5F5' : 'none',
                 alignItems: 'center',
               }}>
                 {/* Title */}
@@ -280,6 +289,39 @@ export default function OffersPage() {
             ))
           )}
         </div>
+
+        {totalPages > 1 && (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '20px 0' }}>
+            <button
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              style={{ padding: '7px 14px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #E0E0E0', borderRadius: '8px', backgroundColor: '#FFFFFF', color: currentPage === 1 ? '#CCC' : '#162860', cursor: currentPage === 1 ? 'not-allowed' : 'pointer' }}
+            >
+              ← Prev
+            </button>
+            {Array.from({ length: totalPages }, (_, i) => i + 1).filter(p => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 2).map((p, idx, arr) => (
+              <span key={p}>
+                {idx > 0 && arr[idx - 1] !== p - 1 && <span style={{ color: '#888', fontSize: '13px', padding: '0 4px' }}>…</span>}
+                <button
+                  onClick={() => setCurrentPage(p)}
+                  style={{ padding: '7px 12px', fontSize: '13px', fontWeight: '600', border: '1.5px solid', borderColor: p === currentPage ? '#0074BD' : '#E0E0E0', borderRadius: '8px', backgroundColor: p === currentPage ? '#0074BD' : '#FFFFFF', color: p === currentPage ? '#FFFFFF' : '#444', cursor: 'pointer', minWidth: '36px' }}
+                >
+                  {p}
+                </button>
+              </span>
+            ))}
+            <button
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages}
+              style={{ padding: '7px 14px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #E0E0E0', borderRadius: '8px', backgroundColor: '#FFFFFF', color: currentPage === totalPages ? '#CCC' : '#162860', cursor: currentPage === totalPages ? 'not-allowed' : 'pointer' }}
+            >
+              Next →
+            </button>
+            <span style={{ fontSize: '12px', color: '#888', marginLeft: '8px' }}>
+              Page {currentPage} of {totalPages}
+            </span>
+          </div>
+        )}
       </main>
     </div>
   )

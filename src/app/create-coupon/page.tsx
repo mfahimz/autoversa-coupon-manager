@@ -31,7 +31,7 @@ interface EmirateConfig {
   name: string
   code: string
   categories: string[]
-  is_enabled: boolean | null
+  is_enabled?: boolean | null
 }
 
 interface Profile {
@@ -135,7 +135,7 @@ export default function CreateCouponPage() {
 
   const [form, setForm] = useState({
     offer_id: '',
-    invoice_number: '',
+    invoice_number: 'I',
     mobile_number: '',
     emirate: '',
     plate_category: '',
@@ -156,9 +156,9 @@ export default function CreateCouponPage() {
     if (!user) { router.push('/login'); return }
 
     const [{ data: profileData }, { data: offersData }, { data: emiratesData }] = await Promise.all([
-      supabase.from('profiles').select('*').eq('id', user.id).single(),
+      supabase.from('profiles').select('user_role, is_active, full_name, advisor_code, id').eq('id', user.id).single(),
       supabase.from('offers').select('id, title, offer_identifier, valid_days, b_valid_days, b_redemption_end_date, m_redemption_end_date, loyalty_brand, referral_brand, loyalty_code, referral_code, loyalty_campaign_code, referral_campaign_code').eq('is_active', true).order('title'),
-      supabase.from('emirates_config').select('*').eq('is_enabled', true).order('sort_order'),
+      supabase.from('emirates_config').select('id, name, code, categories').eq('is_enabled', true).order('sort_order'),
     ])
 
     if (!profileData) { router.push('/login'); return }
@@ -181,18 +181,20 @@ export default function CreateCouponPage() {
     setLoading(false)
   }
 
+  // ─── Toast helper ───────────────────────────────────────────────────────────
   function showToast(message: string, type: 'success' | 'error' = 'success') {
     setToast({ message, type })
     setTimeout(() => setToast(null), 4000)
   }
 
   function validateInvoiceNumber(val: string) {
-    return /^[A-Za-z]\d+$/.test(val) && val.length >= 2 && val.length <= 10
+    return /^I\d{1,6}$/.test(val)
   }
   function validateMobile(mobile: string) {
     return /^5\d{8}$/.test(mobile)
   }
 
+  // ─── Coupon builder ───────────────────────────────────────────────────────────
   function buildCouponCode(seq: number, invoice: string, type: 'LOYALTY' | 'REFERRAL', plate: string) {
     if (!selectedOffer) return ''
     const seqStr = String(seq).padStart(3, '0')
@@ -209,14 +211,15 @@ export default function CreateCouponPage() {
     }
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   function validate() {
     const newErrors: Record<string, string> = {}
     if (!form.offer_id) newErrors.offer_id = 'Please select an offer'
 
     if (!form.invoice_number) {
       newErrors.invoice_number = 'Invoice number is required'
-    } else if (form.invoice_number.length < 2 || form.invoice_number.length > 10 || !/^[A-Za-z]\d+$/.test(form.invoice_number)) {
-      newErrors.invoice_number = 'Invoice must start with a letter followed by digits (e.g. A12345)'
+    } else if (!validateInvoiceNumber(form.invoice_number)) {
+      newErrors.invoice_number = 'Invoice number must start with "I" followed by up to 6 digits (e.g. I123456)'
     }
 
     if (!form.mobile_number) {
@@ -382,7 +385,7 @@ export default function CreateCouponPage() {
 
   function resetForm() {
     setSuccess(null)
-    setForm({ offer_id: '', invoice_number: '', mobile_number: '', emirate: '', plate_category: '', plate_number: '' })
+    setForm({ offer_id: '', invoice_number: 'I', mobile_number: '', emirate: '', plate_category: '', plate_number: '' })
     setErrors({})
   }
 
@@ -419,7 +422,6 @@ export default function CreateCouponPage() {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F7F7F7', paddingTop: '16px' }}>
       <style>{`
-        @keyframes slideIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
         input:focus, select:focus { border-color: #0074BD !important; outline: none; }
       `}</style>
 
@@ -473,25 +475,32 @@ export default function CreateCouponPage() {
           </div>
 
           <div>
-            <label style={labelStyle}>Invoice / Job Number *</label>
+            <label style={labelStyle}>Invoice Number *</label>
             <input style={{ ...inputStyle, ...(errors.invoice_number ? errorBorderStyle : {}) }}
               value={form.invoice_number}
               onChange={e => {
-                let val = e.target.value.replace(/[^A-Za-z0-9]/g, '')
-                if (val.length > 0) {
-                  const first = val[0].toUpperCase()
-                  if (/[A-Z]/.test(first)) {
-                    const rest = val.slice(1).replace(/\D/g, '').slice(0, 9)
-                    val = first + rest
-                  } else {
-                    val = ''
-                  }
+                // Strip everything except alphanumeric — no special chars, no HTML, no scripts
+                let val = e.target.value.replace(/[^A-Za-z0-9]/g, '').toUpperCase()
+                // Enforce max total length early to prevent large input attacks
+                val = val.slice(0, 7)
+                // First character must be 'I' — enforce it
+                if (val.length === 0) {
+                  setForm(f => ({ ...f, invoice_number: 'I' }))
+                  return
                 }
+                if (val[0] !== 'I') {
+                  val = 'I' + val.replace(/[^0-9]/g, '').slice(0, 6)
+                } else {
+                  // First char is I — rest must be digits only, max 6
+                  const digits = val.slice(1).replace(/\D/g, '').slice(0, 6)
+                  val = 'I' + digits
+                }
+                if (val.length === 0) val = 'I'
                 setForm(f => ({ ...f, invoice_number: val }))
               }}
-              placeholder="e.g. A12345" maxLength={10} />
+              placeholder="e.g. I123456" maxLength={7} />
             {errors.invoice_number && <p style={errorStyle}>{errors.invoice_number}</p>}
-            <p style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>Must start with one letter followed by numbers only.</p>
+            <p style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>Must start with "I" followed by up to 6 digits.</p>
           </div>
 
           <div style={{ backgroundColor: '#F7F9FF', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px', border: '1px solid #E0E8FF' }}>
@@ -632,10 +641,19 @@ function renderCouponToCanvas(coupon: any, template: TemplateData): Promise<HTML
         const value = values[pos.variable_key] || ''
         if (!value) return
         const x = (pos.x_coordinate / 100) * baseW
-        const y = (pos.y_coordinate / 100) * baseH
-        ctx.font = `${pos.font_weight || 'normal'} ${pos.font_size || 24}px ${template.font_family || 'Arial'}`
+        const yCenter = (pos.y_coordinate / 100) * baseH
+        // Convert font_size from % of image height to absolute px
+        // If font_size > 20, treat as legacy absolute px (backward compat)
+        const fontSizePx = (pos.font_size && pos.font_size <= 20)
+          ? Math.round((pos.font_size / 100) * baseH)
+          : (pos.font_size || 24)
+        ctx.font = `${pos.font_weight || 'normal'} ${fontSizePx}px ${template.font_family || 'Arial'}`
         ctx.fillStyle = pos.font_color || template.text_color || '#000000'
-        ctx.fillText(value, x, y)
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(value, x, yCenter)
+        ctx.textAlign = 'left'
+        ctx.textBaseline = 'alphabetic'
       })
 
       resolve(canvas)
@@ -653,14 +671,17 @@ function CouponPreview({ coupon, template }: { coupon: any; template: TemplateDa
     ? template.image_width / template.image_height
     : 1.586
 
-  const previewWidth = 560
-  const previewHeight = Math.round(previewWidth / aspectRatio)
+  const containerMaxWidth = 560
+  const naturalWidth = template.image_width || containerMaxWidth
+  const naturalHeight = template.image_height || Math.round(containerMaxWidth / aspectRatio)
+  const scale = containerMaxWidth / naturalWidth
+  const previewWidth = containerMaxWidth
+  const previewHeight = Math.round(naturalHeight * scale)
 
   return (
     <div style={{
       position: 'relative',
-      width: '100%',
-      maxWidth: `${previewWidth}px`,
+      width: `${previewWidth}px`,
       height: `${previewHeight}px`,
       borderRadius: '10px',
       overflow: 'hidden',
@@ -671,7 +692,7 @@ function CouponPreview({ coupon, template }: { coupon: any; template: TemplateDa
       <img
         src={template.file_url}
         alt="Coupon template"
-        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'fill', display: 'block' }}
         crossOrigin="anonymous"
       />
       {template.template_variable_positions.map(pos => {
@@ -685,7 +706,7 @@ function CouponPreview({ coupon, template }: { coupon: any; template: TemplateDa
               left: `${pos.x_coordinate}%`,
               top: `${pos.y_coordinate}%`,
               transform: 'translate(-50%, -50%)',
-              fontSize: `${pos.font_size || 16}px`,
+              fontSize: `${Math.round(((pos.font_size && pos.font_size <= 20 ? pos.font_size : (pos.font_size || 2)) / 100) * naturalHeight * scale)}px`,
               fontWeight: pos.font_weight || 'normal',
               color: pos.font_color || '#000000',
               whiteSpace: 'nowrap',
@@ -800,7 +821,9 @@ function SuccessScreen({ coupons, offer, sequenceNumber, onCreateAnother }: {
     const message = encodeURIComponent(
       `Hi! Here is your AutoVersa coupon\n\nCoupon Code: ${coupon.coupon_code}\nOffer: ${coupon.offer_title}\nExpiry: ${formatDate(coupon.expiry_date)}\n\nPlease present this code at the service centre.`
     )
-    window.open(`https://wa.me/971${coupon.mobile_number}?text=${message}`, '_blank')
+    // WhatsApp Web direct link — always use web.whatsapp.com/send?phone=...&text=... format for browser-based usage
+    // Never use wa.me links — they trigger WhatsApp's redirect page before opening
+    window.open(`https://web.whatsapp.com/send?phone=971${coupon.mobile_number}&text=${message}`, '_blank')
     markActioned(coupon.id)
   }
 

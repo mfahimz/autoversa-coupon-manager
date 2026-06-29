@@ -38,6 +38,8 @@ interface ReferralCustomer {
     updated_at: string | null
 }
 
+const PAGE_SIZE = 10
+
 // ─── Shared styles ────────────────────────────────────────────────────────────
 
 const labelStyle: React.CSSProperties = {
@@ -73,6 +75,7 @@ export default function CustomersPage() {
     const [referralCustomers, setReferralCustomers] = useState<ReferralCustomer[]>([])
     const [loading, setLoading] = useState(true)
     const [search, setSearch] = useState('')
+    const [currentPage, setCurrentPage] = useState(1)
 
     const [selectedCustomer, setSelectedCustomer] = useState<LoyaltyCustomer | ReferralCustomer | null>(null)
     const [editForm, setEditForm] = useState({ full_name: '', email: '', car_model: '' })
@@ -82,12 +85,16 @@ export default function CustomersPage() {
 
     useEffect(() => { init() }, [])
 
+    useEffect(() => {
+        setCurrentPage(1)
+    }, [activeTab, search])
+
     async function init() {
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) { router.push('/login'); return }
 
         const { data: profileData } = await supabase
-            .from('profiles').select('*').eq('id', user.id).single()
+            .from('profiles').select('user_role, is_active').eq('id', user.id).single()
 
         if (!profileData) { router.push('/login'); return }
 
@@ -210,6 +217,9 @@ export default function CustomersPage() {
     const displayed = activeTab === 'loyalty' ? loyaltyFiltered : referralFiltered
     const canEdit = checkPermission(permissions, profile?.user_role, 'action:customer:edit', 'action')
 
+    const totalPages = Math.ceil(displayed.length / PAGE_SIZE)
+    const paginatedCustomers = displayed.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+
     return (
         <div style={{ minHeight: '100vh', backgroundColor: '#F7F7F7', paddingTop: '16px' }}>
             <style>{`
@@ -276,7 +286,7 @@ export default function CustomersPage() {
                                 border: 'none', borderRadius: '9px', cursor: 'pointer',
                                 backgroundColor: activeTab === tab.key ? tab.color : 'transparent',
                                 color: activeTab === tab.key ? '#FFFFFF' : '#666',
-                                transition: 'all 0.15s ease',
+                                transition: 'all 0.15s',
                             }}
                         >
                             {tab.label}
@@ -316,7 +326,7 @@ export default function CustomersPage() {
                                 </tr>
                             </thead>
                             <tbody>
-                                {displayed.map(customer => (
+                                {paginatedCustomers.map(customer => (
                                     <tr
                                         key={customer.id}
                                         className="cust-row"
@@ -365,6 +375,39 @@ export default function CustomersPage() {
                         </table>
                     )}
                 </div>
+
+                {totalPages > 1 && (
+                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '20px 0' }}>
+                        <button
+                            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                            disabled={currentPage === 1}
+                            style={{ padding: '7px 14px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #E0E0E0', borderRadius: '8px', backgroundColor: '#FFFFFF', color: currentPage === 1 ? '#CCC' : '#162860', cursor: currentPage === 1 ? 'not-allowed' : 'pointer' }}
+                        >
+                            ← Prev
+                        </button>
+                        {Array.from({ length: totalPages }, (_, i) => i + 1).filter(p => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 2).map((p, idx, arr) => (
+                            <span key={p}>
+                                {idx > 0 && arr[idx - 1] !== p - 1 && <span style={{ color: '#888', fontSize: '13px', padding: '0 4px' }}>…</span>}
+                                <button
+                                    onClick={() => setCurrentPage(p)}
+                                    style={{ padding: '7px 12px', fontSize: '13px', fontWeight: '600', border: '1.5px solid', borderColor: p === currentPage ? '#0074BD' : '#E0E0E0', borderRadius: '8px', backgroundColor: p === currentPage ? '#0074BD' : '#FFFFFF', color: p === currentPage ? '#FFFFFF' : '#444', cursor: 'pointer', minWidth: '36px' }}
+                                >
+                                    {p}
+                                </button>
+                            </span>
+                        ))}
+                        <button
+                            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                            disabled={currentPage === totalPages}
+                            style={{ padding: '7px 14px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #E0E0E0', borderRadius: '8px', backgroundColor: '#FFFFFF', color: currentPage === totalPages ? '#CCC' : '#162860', cursor: currentPage === totalPages ? 'not-allowed' : 'pointer' }}
+                        >
+                            Next →
+                        </button>
+                        <span style={{ fontSize: '12px', color: '#888', marginLeft: '8px' }}>
+                            Page {currentPage} of {totalPages}
+                        </span>
+                    </div>
+                )}
             </main>
 
             {/* ── EDIT PANEL ── */}

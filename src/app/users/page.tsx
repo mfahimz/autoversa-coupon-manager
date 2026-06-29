@@ -53,6 +53,8 @@ const ROLE_COLORS: Record<string, { bg: string; color: string; activeBg: string;
 
 type TabType = 'users' | 'permissions'
 
+const PAGE_SIZE = 10
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatDate(dateStr: string | null): string {
@@ -118,6 +120,7 @@ export default function UsersPage() {
   const [saving, setSaving] = useState<string | null>(null)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const [currentPage, setCurrentPage] = useState(1)
 
   // Permissions tab
   const [selectedRole, setSelectedRole] = useState<string>(ROLES[0])
@@ -133,6 +136,10 @@ export default function UsersPage() {
   useEffect(() => { init() }, [])
   useEffect(() => { loadPermissions(selectedRole) }, [selectedRole])
 
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [tab])
+
   function showToast(message: string, type: 'success' | 'error' = 'success') {
     setToast({ message, type })
     setTimeout(() => setToast(null), 3500)
@@ -143,8 +150,12 @@ export default function UsersPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
 
-    const { data: profile } = await supabase
-      .from('profiles').select('user_role, is_active').eq('id', user.id).single()
+    const [profileResult, _] = await Promise.all([
+      supabase.from('profiles').select('user_role, is_active').eq('id', user.id).single(),
+      loadUsers()
+    ])
+
+    const { data: profile } = profileResult
 
     if (profile?.is_active === false) {
       await supabase.auth.signOut()
@@ -153,7 +164,6 @@ export default function UsersPage() {
     }
     if (profile?.user_role !== 'ADMIN') { router.push('/dashboard'); return }
 
-    await loadUsers()
     setLoading(false)
   }
 
@@ -280,7 +290,10 @@ export default function UsersPage() {
   }
 
   // Summary counts
-  const totalPages = PERMISSIONS_REGISTRY.length
+  const totalPages = Math.ceil(users.length / PAGE_SIZE)
+  const paginatedUsers = users.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+
+  const totalPermPages = PERMISSIONS_REGISTRY.length
   const totalActions = PERMISSIONS_REGISTRY.reduce((acc, p) => acc + p.actions.length, 0)
   const enabledPages = PERMISSIONS_REGISTRY.filter(p => permissions[p.resource + '||view']).length
   const enabledActions = PERMISSIONS_REGISTRY.flatMap(p => p.actions).filter(a => permissions[a.resource + '||action']).length
@@ -325,99 +338,134 @@ export default function UsersPage() {
 
         {/* ── USERS TAB ── */}
         {tab === 'users' && (
-          <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', overflow: 'hidden' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1.4fr 1fr 1fr 0.8fr 180px', padding: '12px 20px', backgroundColor: '#F7F7F7', borderBottom: '1px solid #EEEEEE' }}>
-              {['Name', 'Email', 'Role', 'Advisor Code', 'Status', 'Actions'].map(h => (
-                <span key={h} style={{ fontSize: '11px', fontWeight: '700', color: '#666', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</span>
-              ))}
-            </div>
-
-            {loading ? (
-              <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <div key={i} style={{ height: '52px', backgroundColor: '#F0F0F0', borderRadius: '8px', animation: 'pulse 1.5s ease-in-out infinite' }} />
+          <>
+            <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', overflow: 'hidden' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1.4fr 1fr 1fr 0.8fr 180px', padding: '12px 20px', backgroundColor: '#F7F7F7', borderBottom: '1px solid #EEEEEE' }}>
+                {['Name', 'Email', 'Role', 'Advisor Code', 'Status', 'Actions'].map(h => (
+                  <span key={h} style={{ fontSize: '11px', fontWeight: '700', color: '#666', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</span>
                 ))}
               </div>
-            ) : users.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '64px', color: '#666', fontSize: '14px' }}>No users found.</div>
-            ) : (
-              users.map((user, i) => {
-                const currentRole = editingRole[user.id] ?? user.user_role
-                const currentCode = editingCode[user.id] ?? (user.advisor_code || '')
-                const roleChanged = editingRole[user.id] && editingRole[user.id] !== user.user_role
-                const codeChanged = editingCode[user.id] !== undefined && editingCode[user.id] !== (user.advisor_code || '')
-                const isSavingRole = saving === user.id + '_role'
-                const isSavingCode = saving === user.id + '_code'
-                const isSavingActive = saving === user.id + '_active'
-                const needsCode = isAdvisorRole(currentRole)
-                const isAdminUser = user.user_role === 'ADMIN'
 
-                return (
-                  <div key={user.id} className="user-row" style={{ display: 'grid', gridTemplateColumns: '1.6fr 1.4fr 1fr 1fr 0.8fr 180px', padding: '14px 20px', borderBottom: i < users.length - 1 ? '1px solid #F5F5F5' : 'none', alignItems: 'center', backgroundColor: user.is_active ? '#FFFFFF' : '#FAFAFA' }}>
-                    <div>
-                      <p style={{ fontSize: '13px', fontWeight: '700', color: user.is_active ? '#1A1A1A' : '#999', margin: 0 }}>{user.full_name}</p>
-                      <p style={{ fontSize: '11px', color: '#888', margin: '2px 0 0' }}>{formatDate(user.created_at)}</p>
-                    </div>
-                    <span style={{ fontSize: '12px', color: '#666' }}>{user.email || '—'}</span>
-                    <div>
-                      {isAdminUser ? (
-                        <span style={{ fontSize: '12px', fontWeight: '700', color: '#162860', backgroundColor: '#EEF2FF', padding: '4px 10px', borderRadius: '6px' }}>Admin</span>
-                      ) : (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <select value={currentRole} onChange={e => setEditingRole(prev => ({ ...prev, [user.id]: e.target.value }))} style={{ padding: '6px 8px', fontSize: '12px', border: `1.5px solid ${roleChanged ? '#0074BD' : '#E0E0E0'}`, borderRadius: '7px', outline: 'none', backgroundColor: '#FFFFFF', color: '#1A1A1A', cursor: 'pointer' }}>
-                            {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
-                          </select>
-                          {roleChanged && (
-                            <button onClick={() => saveUserRole(user.id)} disabled={isSavingRole} style={{ padding: '5px 10px', fontSize: '11px', fontWeight: '600', backgroundColor: '#0074BD', color: '#FFFFFF', border: 'none', borderRadius: '6px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                              {isSavingRole ? '...' : 'Save'}
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    <div>
-                      {needsCode && !isAdminUser ? (
-                        <div>
+              {loading ? (
+                <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} style={{ height: '52px', backgroundColor: '#F0F0F0', borderRadius: '8px', animation: 'pulse 1.5s ease-in-out infinite' }} />
+                  ))}
+                </div>
+              ) : users.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '64px', color: '#666', fontSize: '14px' }}>No users found.</div>
+              ) : (
+                paginatedUsers.map((user, i) => {
+                  const currentRole = editingRole[user.id] ?? user.user_role
+                  const currentCode = editingCode[user.id] ?? (user.advisor_code || '')
+                  const roleChanged = editingRole[user.id] && editingRole[user.id] !== user.user_role
+                  const codeChanged = editingCode[user.id] !== undefined && editingCode[user.id] !== (user.advisor_code || '')
+                  const isSavingRole = saving === user.id + '_role'
+                  const isSavingCode = saving === user.id + '_code'
+                  const isSavingActive = saving === user.id + '_active'
+                  const needsCode = isAdvisorRole(currentRole)
+                  const isAdminUser = user.user_role === 'ADMIN'
+
+                  return (
+                    <div key={user.id} className="user-row" style={{ display: 'grid', gridTemplateColumns: '1.6fr 1.4fr 1fr 1fr 0.8fr 180px', padding: '14px 20px', borderBottom: i < paginatedUsers.length - 1 ? '1px solid #F5F5F5' : 'none', alignItems: 'center', backgroundColor: user.is_active ? '#FFFFFF' : '#FAFAFA' }}>
+                      <div>
+                        <p style={{ fontSize: '13px', fontWeight: '700', color: user.is_active ? '#1A1A1A' : '#999', margin: 0 }}>{user.full_name}</p>
+                        <p style={{ fontSize: '11px', color: '#888', margin: '2px 0 0' }}>{formatDate(user.created_at)}</p>
+                      </div>
+                      <span style={{ fontSize: '12px', color: '#666' }}>{user.email || '—'}</span>
+                      <div>
+                        {isAdminUser ? (
+                          <span style={{ fontSize: '12px', fontWeight: '700', color: '#162860', backgroundColor: '#EEF2FF', padding: '4px 10px', borderRadius: '6px' }}>Admin</span>
+                        ) : (
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <input
-                              value={currentCode}
-                              onChange={e => {
-                                const val = e.target.value.replace(/[^A-Za-z0-9]/g, '').toUpperCase()
-                                setEditingCode(prev => ({ ...prev, [user.id]: val }))
-                                setErrors(prev => { const copy = { ...prev }; delete copy[user.id]; return copy })
-                              }}
-                              placeholder="SA001"
-                              style={{ width: '70px', padding: '6px 8px', fontSize: '12px', fontFamily: 'monospace', border: `1.5px solid ${codeChanged ? '#0074BD' : '#E0E0E0'}`, borderRadius: '7px', outline: 'none' }}
-                            />
-                            {codeChanged && (
-                              <button onClick={() => saveAdvisorCode(user.id)} disabled={isSavingCode} style={{ padding: '5px 10px', fontSize: '11px', fontWeight: '600', backgroundColor: '#0074BD', color: '#FFFFFF', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
-                                {isSavingCode ? '...' : 'Save'}
+                            <select value={currentRole} onChange={e => setEditingRole(prev => ({ ...prev, [user.id]: e.target.value }))} style={{ padding: '6px 8px', fontSize: '12px', border: `1.5px solid ${roleChanged ? '#0074BD' : '#E0E0E0'}`, borderRadius: '7px', outline: 'none', backgroundColor: '#FFFFFF', color: '#1A1A1A', cursor: 'pointer' }}>
+                              {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+                            </select>
+                            {roleChanged && (
+                              <button onClick={() => saveUserRole(user.id)} disabled={isSavingRole} style={{ padding: '5px 10px', fontSize: '11px', fontWeight: '600', backgroundColor: '#0074BD', color: '#FFFFFF', border: 'none', borderRadius: '6px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                {isSavingRole ? '...' : 'Save'}
                               </button>
                             )}
                           </div>
-                          {errors[user.id] && <p style={{ fontSize: '11px', color: '#D0021B', margin: '4px 0 0' }}>{errors[user.id]}</p>}
-                        </div>
-                      ) : (
-                        <span style={{ fontSize: '12px', color: '#888' }}>—</span>
-                      )}
+                        )}
+                      </div>
+                      <div>
+                        {needsCode && !isAdminUser ? (
+                          <div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <input
+                                value={currentCode}
+                                onChange={e => {
+                                  const val = e.target.value.replace(/[^A-Za-z0-9]/g, '').toUpperCase()
+                                  setEditingCode(prev => ({ ...prev, [user.id]: val }))
+                                  setErrors(prev => { const copy = { ...prev }; delete copy[user.id]; return copy })
+                                }}
+                                placeholder="SA001"
+                                style={{ width: '70px', padding: '6px 8px', fontSize: '12px', fontFamily: 'monospace', border: `1.5px solid ${codeChanged ? '#0074BD' : '#E0E0E0'}`, borderRadius: '7px', outline: 'none' }}
+                              />
+                              {codeChanged && (
+                                <button onClick={() => saveAdvisorCode(user.id)} disabled={isSavingCode} style={{ padding: '5px 10px', fontSize: '11px', fontWeight: '600', backgroundColor: '#0074BD', color: '#FFFFFF', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
+                                  {isSavingCode ? '...' : 'Save'}
+                                </button>
+                              )}
+                            </div>
+                            {errors[user.id] && <p style={{ fontSize: '11px', color: '#D0021B', margin: '4px 0 0' }}>{errors[user.id]}</p>}
+                          </div>
+                        ) : (
+                          <span style={{ fontSize: '12px', color: '#888' }}>—</span>
+                        )}
+                      </div>
+                      <span style={{ display: 'inline-block', fontSize: '11px', fontWeight: '600', padding: '4px 10px', borderRadius: '100px', width: 'fit-content', backgroundColor: user.is_active ? '#dcfce7' : '#F0F0F0', color: user.is_active ? '#16a34a' : '#666' }}>
+                        {user.is_active ? 'Active' : 'Inactive'}
+                      </span>
+                      <div>
+                        {!isAdminUser ? (
+                          <button onClick={() => toggleUserActive(user)} disabled={isSavingActive} style={{ padding: '6px 12px', fontSize: '12px', fontWeight: '600', backgroundColor: user.is_active ? '#fee2e2' : '#dcfce7', color: user.is_active ? '#D0021B' : '#16a34a', border: 'none', borderRadius: '7px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                            {isSavingActive ? '...' : user.is_active ? 'Deactivate' : 'Activate'}
+                          </button>
+                        ) : (
+                          <span style={{ fontSize: '12px', color: '#888', fontStyle: 'italic' }}>Protected</span>
+                        )}
+                      </div>
                     </div>
-                    <span style={{ display: 'inline-block', fontSize: '11px', fontWeight: '600', padding: '4px 10px', borderRadius: '100px', width: 'fit-content', backgroundColor: user.is_active ? '#dcfce7' : '#F0F0F0', color: user.is_active ? '#16a34a' : '#666' }}>
-                      {user.is_active ? 'Active' : 'Inactive'}
-                    </span>
-                    <div>
-                      {!isAdminUser ? (
-                        <button onClick={() => toggleUserActive(user)} disabled={isSavingActive} style={{ padding: '6px 12px', fontSize: '12px', fontWeight: '600', backgroundColor: user.is_active ? '#fee2e2' : '#dcfce7', color: user.is_active ? '#D0021B' : '#16a34a', border: 'none', borderRadius: '7px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                          {isSavingActive ? '...' : user.is_active ? 'Deactivate' : 'Activate'}
-                        </button>
-                      ) : (
-                        <span style={{ fontSize: '12px', color: '#888', fontStyle: 'italic' }}>Protected</span>
-                      )}
-                    </div>
-                  </div>
-                )
-              })
+                  )
+                })
+              )}
+            </div>
+
+            {totalPages > 1 && (
+              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '20px 0' }}>
+                <button
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  style={{ padding: '7px 14px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #E0E0E0', borderRadius: '8px', backgroundColor: '#FFFFFF', color: currentPage === 1 ? '#CCC' : '#162860', cursor: currentPage === 1 ? 'not-allowed' : 'pointer' }}
+                >
+                  ← Prev
+                </button>
+                {Array.from({ length: totalPages }, (_, i) => i + 1).filter(p => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 2).map((p, idx, arr) => (
+                  <span key={p}>
+                    {idx > 0 && arr[idx - 1] !== p - 1 && <span style={{ color: '#888', fontSize: '13px', padding: '0 4px' }}>…</span>}
+                    <button
+                      onClick={() => setCurrentPage(p)}
+                      style={{ padding: '7px 12px', fontSize: '13px', fontWeight: '600', border: '1.5px solid', borderColor: p === currentPage ? '#0074BD' : '#E0E0E0', borderRadius: '8px', backgroundColor: p === currentPage ? '#0074BD' : '#FFFFFF', color: p === currentPage ? '#FFFFFF' : '#444', cursor: 'pointer', minWidth: '36px' }}
+                    >
+                      {p}
+                    </button>
+                  </span>
+                ))}
+                <button
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  style={{ padding: '7px 14px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #E0E0E0', borderRadius: '8px', backgroundColor: '#FFFFFF', color: currentPage === totalPages ? '#CCC' : '#162860', cursor: currentPage === totalPages ? 'not-allowed' : 'pointer' }}
+                >
+                  Next →
+                </button>
+                <span style={{ fontSize: '12px', color: '#888', marginLeft: '8px' }}>
+                  Page {currentPage} of {totalPages}
+                </span>
+              </div>
             )}
-          </div>
+          </>
         )}
 
         {/* ── PERMISSIONS TAB ── */}
@@ -470,7 +518,7 @@ export default function UsersPage() {
                     {ROLE_LABELS[selectedRole]}
                   </p>
                   <p style={{ fontSize: '12px', color: '#666', margin: '2px 0 0' }}>
-                    {enabledPages} of {totalPages} pages · {enabledActions} of {totalActions} actions enabled
+                    {enabledPages} of {totalPermPages} pages · {enabledActions} of {totalActions} actions enabled
                   </p>
                 </div>
                 {hasUnsavedChanges && (

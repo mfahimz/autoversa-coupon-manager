@@ -31,21 +31,64 @@ export default function Navbar() {
 
     useEffect(() => {
         async function init() {
-            const { data: { user } } = await supabase.auth.getUser()
-            if (!user) return
-            const { data: profile } = await supabase
-                .from('profiles').select('user_role').eq('id', user.id).single()
-            if (!profile) return
-            const r = profile.user_role
-            setRole(r)
-            const perms = await loadPermissionsForRole(r)
-            setPermissions(perms)
-            setPermissionsLoaded(true)
+            try {
+                const { data: { user } } = await supabase.auth.getUser()
+                if (!user) return
+
+                const cacheKey = `navbar_perms_${user.id}`
+                let cachedData: { role: string; permissions: PermissionsMap } | null = null
+
+                try {
+                    const cached = sessionStorage.getItem(cacheKey)
+                    if (cached) {
+                        cachedData = JSON.parse(cached)
+                    }
+                } catch (e) {
+                    console.warn('Error reading from sessionStorage:', e)
+                }
+
+                if (cachedData) {
+                    setRole(cachedData.role)
+                    setPermissions(cachedData.permissions)
+                    setPermissionsLoaded(true)
+                    return
+                }
+
+                const { data: profile } = await supabase
+                    .from('profiles')
+                    .select('user_role')
+                    .eq('id', user.id)
+                    .single()
+                if (!profile) return
+
+                const r = profile.user_role
+                setRole(r)
+
+                const perms = await loadPermissionsForRole(r)
+                setPermissions(perms)
+                setPermissionsLoaded(true)
+
+                try {
+                    sessionStorage.setItem(cacheKey, JSON.stringify({ role: r, permissions: perms }))
+                } catch (e) {
+                    console.warn('Error writing to sessionStorage:', e)
+                }
+            } catch (error) {
+                console.error('Error in Navbar init:', error)
+            }
         }
         init()
     }, [])
 
     async function handleSignOut() {
+        try {
+            const { data: { user } } = await supabase.auth.getUser()
+            if (user) {
+                sessionStorage.removeItem(`navbar_perms_${user.id}`)
+            }
+        } catch (e) {
+            console.warn('Error clearing sessionStorage:', e)
+        }
         await supabase.auth.signOut()
         router.push('/login')
         router.refresh()

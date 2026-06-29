@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Fragment } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/layout/Navbar'
@@ -140,12 +140,26 @@ export default function CouponsPage() {
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
 
+  // CHANGE 1: state variables
+  const [filterType, setFilterType] = useState<'all' | 'LOYALTY' | 'REFERRAL'>('all')
+  const [filterStatus, setFilterStatus] = useState<'all' | 'ACTIVE' | 'REDEEMED' | 'EXPIRED' | 'CANCELLED'>('all')
+  const [filterOffer, setFilterOffer] = useState<string>('all')
+  const [filterDateFrom, setFilterDateFrom] = useState<string>('')
+  const [filterDateTo, setFilterDateTo] = useState<string>('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [cancelConfirmId, setCancelConfirmId] = useState<string | null>(null)
+
+  const PAGE_SIZE = 25
+
   // ADMIN always bypasses — canVerify includes ADMIN
   const canVerify = profile?.user_role === 'ADMIN' ||
     profile?.user_role === 'SERVICE_ADVISOR' ||
     profile?.user_role === 'BMW_SERVICE_ADVISOR'
 
   useEffect(() => { loadData() }, [])
+
+  // Reset to page 1 whenever filters change
+  useEffect(() => { setCurrentPage(1) }, [search, filterType, filterStatus, filterOffer, filterDateFrom, filterDateTo, kpiTab])
 
   function showToast(message: string, type: 'success' | 'error' = 'success') {
     setToast({ message, type })
@@ -158,7 +172,11 @@ export default function CouponsPage() {
     if (!user) { router.push('/login'); return }
 
     const { data: profileData } = await supabase
-      .from('profiles').select('user_role, full_name, id, is_active').eq('id', user.id).single()
+      .from('profiles')
+      .select('user_role, full_name, id, is_active')
+      .eq('id', user.id)
+      .single()
+
     setProfile(profileData)
 
     if (!profileData) { router.push('/login'); return }
@@ -180,10 +198,12 @@ export default function CouponsPage() {
 
     let query = supabase
       .from('coupons')
-      .select('id, coupon_code, coupon_type, identifier_type, plate_combined_string, mobile_number, car_model, offer_title, offer_id, customer_name, advisor_name, issue_date, expiry_date, status, redemption_count, stage, parent_coupon_id, offers(loyalty_brand, referral_brand)')
+      .select('id, coupon_code, coupon_type, identifier_type, plate_combined_string, mobile_number, car_model, offer_title, offer_id, customer_name, advisor_name, issue_date, expiry_date, status, redemption_count, stage, parent_coupon_id, issued_by, offers(loyalty_brand, referral_brand)')
       .order('created_at', { ascending: false })
 
-    if (isAdvisor) query = query.eq('issued_by', user.id)
+    if (isAdvisor) {
+      query = query.eq('issued_by', user.id)
+    }
 
     const { data: couponData } = await query
     if (!couponData) { setLoading(false); return }
@@ -194,58 +214,52 @@ export default function CouponsPage() {
       referral_brand: c.offers?.referral_brand || null,
     }))
     setCoupons(mappedCoupons)
+    // CHANGE 2: Computed inside render — derive unique offers from loaded coupons for the filter dropdown
 
-    const couponIds = couponData.map(c => c.id)
-    if (couponIds.length > 0) {
-      const { data: apptData } = await supabase
-        .from('appointments')
-        .select('coupon_id, status')
-        .in('coupon_id', couponIds)
-        .not('status', 'eq', 'cancelled')
+    const couponIds = mappedCoupons.map(c => c.id)
+    const referralIds = mappedCoupons.filter(c => c.coupon_type === 'REFERRAL').map(c => c.id)
+    const offerIds = Array.from(new Set(mappedCoupons.map(c => c.offer_id).filter(Boolean))) as string[]
 
-      if (apptData) {
-        const map: Record<string, string> = {}
-        apptData.forEach((a: AppointmentStatus) => {
-          if (a.coupon_id) map[a.coupon_id] = a.status
-        })
-        setApptStatuses(map)
-      }
+    const [apptResult, visitedResult, stagesResult] = await Promise.all([
+      couponIds.length > 0
+        ? supabase.from('appointments').select('coupon_id, status').in('coupon_id', couponIds).not('status', 'eq', 'cancelled')
+        : Promise.resolve({ data: [] as any }),
+      referralIds.length > 0
+        ? supabase.from('appointments').select('coupon_id').in('coupon_id', referralIds).eq('status', 'visited')
+        : Promise.resolve({ data: [] as any }),
+      offerIds.length > 0
+        ? supabase.from('offer_stages').select('offer_id, stage_number').in('offer_id', offerIds)
+        : Promise.resolve({ data: [] as any })
+    ])
 
-      // Count visited appointments per referral coupon
-      const referralIds = couponData.filter(c => c.coupon_type === 'REFERRAL').map(c => c.id)
-      if (referralIds.length > 0) {
-        const { data: visitedData } = await supabase
-          .from('appointments')
-          .select('coupon_id')
-          .in('coupon_id', referralIds)
-          .eq('status', 'visited')
+    const { data: apptData } = apptResult
+    const { data: visitedData } = visitedResult
+    const { data: stagesData } = stagesResult
 
-        if (visitedData) {
-          const counts: Record<string, number> = {}
-          visitedData.forEach((a: any) => {
-            counts[a.coupon_id] = (counts[a.coupon_id] || 0) + 1
-          })
-          setReferralVisitCounts(counts)
-        }
-      }
+    if (apptData) {
+      const map: Record<string, string> = {}
+      apptData.forEach((a: AppointmentStatus) => {
+        if (a.coupon_id) map[a.coupon_id] = a.status
+      })
+      setApptStatuses(map)
     }
 
-    const offerIds = Array.from(new Set(couponData.map(c => c.offer_id).filter(Boolean))) as string[]
-    if (offerIds.length > 0) {
-      const { data: stagesData } = await supabase
-        .from('offer_stages')
-        .select('offer_id, stage_number')
-        .in('offer_id', offerIds)
+    if (visitedData) {
+      const counts: Record<string, number> = {}
+      visitedData.forEach((a: any) => {
+        counts[a.coupon_id] = (counts[a.coupon_id] || 0) + 1
+      })
+      setReferralVisitCounts(counts)
+    }
 
-      if (stagesData) {
-        const map: Record<string, number> = {}
-        stagesData.forEach((s: any) => {
-          if (!map[s.offer_id] || s.stage_number > map[s.offer_id]) {
-            map[s.offer_id] = s.stage_number
-          }
-        })
-        setOfferMaxStages(map)
-      }
+    if (stagesData) {
+      const map: Record<string, number> = {}
+      stagesData.forEach((s: any) => {
+        if (!map[s.offer_id] || s.stage_number > map[s.offer_id]) {
+          map[s.offer_id] = s.stage_number
+        }
+      })
+      setOfferMaxStages(map)
     }
 
     setLoading(false)
@@ -277,6 +291,7 @@ export default function CouponsPage() {
     }
   }
 
+  // CHANGE 3: Update the filtered logic to apply all filters
   const filtered = coupons.filter(c => {
     const matchSearch = !search.trim() ||
       c.coupon_code.toLowerCase().includes(search.toLowerCase()) ||
@@ -284,8 +299,21 @@ export default function CouponsPage() {
       c.advisor_name?.toLowerCase().includes(search.toLowerCase()) ||
       c.plate_combined_string?.toLowerCase().includes(search.toLowerCase()) ||
       (c.mobile_number || '').includes(search)
-    return matchSearch && filterByKpi(c)
+    const matchType = filterType === 'all' || c.coupon_type === filterType
+    const matchStatus = filterStatus === 'all' || c.status === filterStatus
+    const matchOffer = filterOffer === 'all' || c.offer_id === filterOffer
+    const matchDateFrom = !filterDateFrom || (c.issue_date && c.issue_date >= filterDateFrom)
+    const matchDateTo = !filterDateTo || (c.issue_date && c.issue_date <= filterDateTo)
+    return matchSearch && matchType && matchStatus && matchOffer && matchDateFrom && matchDateTo && filterByKpi(c)
   })
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
+  const paginated = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+
+  // Derive unique offers from loaded coupons for offer filter dropdown
+  const offerOptions = Array.from(
+    new Map(coupons.filter(c => c.offer_id && c.offer_title).map(c => [c.offer_id, c.offer_title])).entries()
+  ).map(([id, title]) => ({ id: id!, title: title! }))
 
   // ── Download dialog ────────────────────────────────────────────────────────
 
@@ -308,6 +336,7 @@ export default function CouponsPage() {
     setDlTemplatesLoading(false)
   }
 
+  // CHANGE 8: Fix downloadCouponJPG to use percentage-based font sizes and correct text anchoring
   async function downloadCouponJPG(coupon: Coupon, templateType: 'LOYALTY' | 'REFERRAL') {
     const template = dlTemplates[templateType]
     if (!template?.file_url) {
@@ -317,11 +346,11 @@ export default function CouponsPage() {
 
     setDownloading(templateType)
 
-    let couponForValues: Coupon = coupon
+    let couponForValues: any = coupon
     if (coupon.coupon_type !== templateType) {
       if (templateType === 'REFERRAL' && coupon.coupon_type === 'LOYALTY') {
         const { data } = await supabase
-          .from('coupons').select('*').eq('parent_coupon_id', coupon.id).single()
+          .from('coupons').select('coupon_type, coupon_code, expiry_date, advisor_name, offer_title, plate_combined_string, mobile_number').eq('parent_coupon_id', coupon.id).single()
         if (data) {
           couponForValues = {
             ...data,
@@ -332,7 +361,7 @@ export default function CouponsPage() {
       } else if (templateType === 'LOYALTY' && coupon.coupon_type === 'REFERRAL') {
         if (coupon.parent_coupon_id) {
           const { data } = await supabase
-            .from('coupons').select('*').eq('id', coupon.parent_coupon_id).single()
+            .from('coupons').select('coupon_type, coupon_code, expiry_date, advisor_name, offer_title, plate_combined_string, mobile_number').eq('id', coupon.parent_coupon_id).single()
           if (data) {
             couponForValues = {
               ...data,
@@ -357,14 +386,22 @@ export default function CouponsPage() {
 
       const values = resolveVariableValues(couponForValues)
       const positions = template.template_variable_positions || []
+      
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
       positions.forEach(pos => {
         const value = values[pos.variable_key] || ''
         if (!value) return
         const x = (pos.x_coordinate / 100) * canvas.width
-        const y = (pos.y_coordinate / 100) * canvas.height
-        ctx.font = `${pos.font_weight || 'normal'} ${pos.font_size || 24}px ${template.font_family || 'Arial'}`
+        const yCenter = (pos.y_coordinate / 100) * canvas.height
+        const fontSizePx = (pos.font_size && pos.font_size <= 20)
+          ? Math.round((pos.font_size / 100) * canvas.height)
+          : (pos.font_size || 24)
+        ctx.font = `${pos.font_weight || 'normal'} ${fontSizePx}px ${template.font_family || 'Arial'}`
         ctx.fillStyle = pos.font_color || template.text_color || '#000000'
-        ctx.fillText(value, x, y)
+        ctx.fillText(value, x, yCenter)
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
       })
 
       const link = document.createElement('a')
@@ -393,7 +430,7 @@ export default function CouponsPage() {
 
     let query = supabase
       .from('coupons')
-      .select('*, offers(loyalty_brand, referral_brand, loyalty_code, referral_code)')
+      .select('id, coupon_code, offer_title, plate_combined_string, issue_date, expiry_date, advisor_name, status, stage, offer_id, offers(loyalty_brand, referral_brand)')
       .eq('coupon_type', 'LOYALTY')
 
     if (verifyMode === 'code') {
@@ -590,6 +627,76 @@ export default function CouponsPage() {
               />
             </div>
 
+            {/* CHANGE 4: Add filter bar between search input and table */}
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
+              
+              {/* Type filter */}
+              <select
+                value={filterType}
+                onChange={e => setFilterType(e.target.value as any)}
+                style={{ padding: '8px 12px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #E0E0E0', borderRadius: '8px', outline: 'none', backgroundColor: '#FFFFFF', color: '#1A1A1A', cursor: 'pointer' }}
+              >
+                <option value="all">All Types</option>
+                <option value="LOYALTY">Loyalty</option>
+                <option value="REFERRAL">Referral</option>
+              </select>
+
+              {/* Status filter */}
+              <select
+                value={filterStatus}
+                onChange={e => setFilterStatus(e.target.value as any)}
+                style={{ padding: '8px 12px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #E0E0E0', borderRadius: '8px', outline: 'none', backgroundColor: '#FFFFFF', color: '#1A1A1A', cursor: 'pointer' }}
+              >
+                <option value="all">All Statuses</option>
+                <option value="ACTIVE">Active</option>
+                <option value="REDEEMED">Redeemed</option>
+                <option value="EXPIRED">Expired</option>
+                <option value="CANCELLED">Cancelled</option>
+              </select>
+
+              {/* Offer filter */}
+              <select
+                value={filterOffer}
+                onChange={e => setFilterOffer(e.target.value)}
+                style={{ padding: '8px 12px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #E0E0E0', borderRadius: '8px', outline: 'none', backgroundColor: '#FFFFFF', color: '#1A1A1A', cursor: 'pointer', maxWidth: '220px' }}
+              >
+                <option value="all">All Offers</option>
+                {offerOptions.map(o => (
+                  <option key={o.id} value={o.id}>{o.title}</option>
+                ))}
+              </select>
+
+              {/* Date from */}
+              <input
+                type="date"
+                value={filterDateFrom}
+                onChange={e => setFilterDateFrom(e.target.value)}
+                style={{ padding: '8px 12px', fontSize: '13px', border: '1.5px solid #E0E0E0', borderRadius: '8px', outline: 'none', backgroundColor: '#FFFFFF', color: filterDateFrom ? '#1A1A1A' : '#999', cursor: 'pointer' }}
+              />
+
+              {/* Date to */}
+              <input
+                type="date"
+                value={filterDateTo}
+                onChange={e => setFilterDateTo(e.target.value)}
+                style={{ padding: '8px 12px', fontSize: '13px', border: '1.5px solid #E0E0E0', borderRadius: '8px', outline: 'none', backgroundColor: '#FFFFFF', color: filterDateTo ? '#1A1A1A' : '#999', cursor: 'pointer' }}
+              />
+
+              {/* Clear filters button — only show if any filter is active */}
+              {(filterType !== 'all' || filterStatus !== 'all' || filterOffer !== 'all' || filterDateFrom || filterDateTo) && (
+                <button
+                  onClick={() => { setFilterType('all'); setFilterStatus('all'); setFilterOffer('all'); setFilterDateFrom(''); setFilterDateTo('') }}
+                  style={{ padding: '8px 14px', fontSize: '13px', fontWeight: '600', backgroundColor: '#F0F0F0', color: '#666', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
+                >
+                  Clear Filters
+                </button>
+              )}
+
+              <span style={{ fontSize: '12px', color: '#888', marginLeft: 'auto' }}>
+                {filtered.length} result{filtered.length !== 1 ? 's' : ''}
+              </span>
+            </div>
+
             {/* Table */}
             <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', overflow: 'hidden' }}>
               <div style={{
@@ -612,15 +719,16 @@ export default function CouponsPage() {
                 </div>
               ) : filtered.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '64px 0', color: '#666', fontSize: '14px' }}>
-                  {search || kpiTab !== 'total' ? 'No coupons match your filters.' : 'No coupons yet. '}
-                  {!search && kpiTab === 'total' && (
+                  {search || filterType !== 'all' || filterStatus !== 'all' || filterOffer !== 'all' || filterDateFrom || filterDateTo || kpiTab !== 'total' ? 'No coupons match your filters.' : 'No coupons yet. '}
+                  {!search && filterType === 'all' && filterStatus === 'all' && filterOffer === 'all' && !filterDateFrom && !filterDateTo && kpiTab === 'total' && (
                     <span onClick={() => router.push('/create-coupon')} style={{ color: '#0074BD', cursor: 'pointer', fontWeight: '500' }}>
                       Create the first one →
                     </span>
                   )}
                 </div>
               ) : (
-                filtered.map((coupon, i) => {
+                // CHANGE 5: Update table rows to use paginated instead of filtered
+                paginated.map((coupon, i) => {
                   const statusStyle = STATUS_COLORS[coupon.status || 'EXPIRED'] || STATUS_COLORS.EXPIRED
                   const isExpired = coupon.expiry_date ? new Date(coupon.expiry_date) < new Date() : false
                   const apptStatus = apptStatuses[coupon.id]
@@ -638,7 +746,7 @@ export default function CouponsPage() {
                         display: 'grid',
                         gridTemplateColumns: '2.2fr 1.4fr 1.2fr 0.8fr 0.8fr 1fr 0.9fr 180px',
                         padding: '13px 20px',
-                        borderBottom: i < filtered.length - 1 ? '1px solid #F5F5F5' : 'none',
+                        borderBottom: i < paginated.length - 1 ? '1px solid #F5F5F5' : 'none',
                         alignItems: 'center',
                         backgroundColor: '#FFFFFF',
                       }}
@@ -751,17 +859,11 @@ export default function CouponsPage() {
                             + Appt
                           </button>
                         )}
+                        {/* CHANGE 7: Replaced inline Cancel button with trigger to confirmation dialog */}
                         {coupon.status === 'ACTIVE' && (
                           <button
-                            onClick={async () => {
-                              await supabase.from('coupons').update({ status: 'CANCELLED' }).eq('id', coupon.id)
-                              loadData()
-                            }}
-                            style={{
-                              padding: '5px 8px', fontSize: '11px', fontWeight: '600',
-                              backgroundColor: '#fee2e2', color: '#D0021B',
-                              border: 'none', borderRadius: '6px', cursor: 'pointer',
-                            }}
+                            onClick={() => setCancelConfirmId(coupon.id)}
+                            style={{ padding: '5px 8px', fontSize: '11px', fontWeight: '600', backgroundColor: '#fee2e2', color: '#D0021B', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
                           >
                             Cancel
                           </button>
@@ -772,6 +874,42 @@ export default function CouponsPage() {
                 })
               )}
             </div>
+
+            {/* CHANGE 6: Add pagination controls after the table closing div */}
+            {totalPages > 1 && (
+              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '20px 0' }}>
+                <button
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  style={{ padding: '7px 14px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #E0E0E0', borderRadius: '8px', backgroundColor: '#FFFFFF', color: currentPage === 1 ? '#CCC' : '#162860', cursor: currentPage === 1 ? 'not-allowed' : 'pointer' }}
+                >
+                  ← Prev
+                </button>
+                {Array.from({ length: totalPages }, (_, i) => i + 1).filter(p => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 2).map((p, idx, arr) => (
+                  <Fragment key={p}>
+                    {idx > 0 && arr[idx - 1] !== p - 1 && (
+                      <span style={{ color: '#888', fontSize: '13px' }}>…</span>
+                    )}
+                    <button
+                      onClick={() => setCurrentPage(p)}
+                      style={{ padding: '7px 12px', fontSize: '13px', fontWeight: '600', border: '1.5px solid', borderColor: p === currentPage ? '#0074BD' : '#E0E0E0', borderRadius: '8px', backgroundColor: p === currentPage ? '#0074BD' : '#FFFFFF', color: p === currentPage ? '#FFFFFF' : '#444', cursor: 'pointer', minWidth: '36px' }}
+                    >
+                      {p}
+                    </button>
+                  </Fragment>
+                ))}
+                <button
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  style={{ padding: '7px 14px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #E0E0E0', borderRadius: '8px', backgroundColor: '#FFFFFF', color: currentPage === totalPages ? '#CCC' : '#162860', cursor: currentPage === totalPages ? 'not-allowed' : 'pointer' }}
+                >
+                  Next →
+                </button>
+                <span style={{ fontSize: '12px', color: '#888', marginLeft: '8px' }}>
+                  Page {currentPage} of {totalPages} · {filtered.length} total
+                </span>
+              </div>
+            )}
           </>
         )}
 
@@ -996,6 +1134,34 @@ export default function CouponsPage() {
           </div>
         )}
       </main>
+
+      {/* CHANGE 7: Add cancel confirmation modal */}
+      {cancelConfirmId && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1000, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
+          <div style={{ backgroundColor: '#FFFFFF', borderRadius: '20px', padding: '28px', width: '100%', maxWidth: '380px', boxShadow: '0 8px 40px rgba(0,0,0,0.15)' }}>
+            <h2 style={{ fontSize: '17px', fontWeight: '700', color: '#1A1A1A', margin: '0 0 10px' }}>Cancel Coupon?</h2>
+            <p style={{ fontSize: '14px', color: '#666', margin: '0 0 24px' }}>This action cannot be undone. The coupon will be permanently cancelled.</p>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                onClick={() => setCancelConfirmId(null)}
+                style={{ flex: 1, padding: '12px', backgroundColor: '#F0F0F0', color: '#444', border: 'none', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}
+              >
+                Keep Coupon
+              </button>
+              <button
+                onClick={async () => {
+                  await supabase.from('coupons').update({ status: 'CANCELLED' }).eq('id', cancelConfirmId)
+                  setCancelConfirmId(null)
+                  loadData()
+                }}
+                style={{ flex: 1, padding: '12px', backgroundColor: '#D0021B', color: '#FFFFFF', border: 'none', borderRadius: '10px', fontSize: '14px', fontWeight: '700', cursor: 'pointer' }}
+              >
+                Yes, Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── DOWNLOAD DIALOG ── */}
       {downloadDialog && (

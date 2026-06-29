@@ -892,6 +892,19 @@ export type Database = {
     }
     Functions: {
       advance_m_coupon_stage: { Args: { p_b_coupon_id: string }; Returns: Json }
+      get_offer_summaries: {
+        Args: never
+        Returns: {
+          actual_visited: number
+          loyalty_issued: number
+          offer_id: string
+          referral_issued: number
+          stage1_count: number
+          stage2_count: number
+          stage3_count: number
+          total_issued: number
+        }[]
+      }
       increment_coupon_sequence: {
         Args: { p_offer_id: string }
         Returns: number

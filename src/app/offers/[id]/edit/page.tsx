@@ -18,8 +18,19 @@ export default function EditOfferPage() {
             const { data: { user } } = await supabase.auth.getUser()
             if (!user) { router.push('/login'); return }
 
-            const { data: profileData } = await supabase
-                .from('profiles').select('user_role, is_active').eq('id', user.id).single()
+            const id = Array.isArray(params.id) ? params.id[0] : params.id
+            if (!id) {
+                setLoading(false)
+                return
+            }
+
+            const [profileResult, offerResult] = await Promise.all([
+                supabase.from('profiles').select('user_role, is_active').eq('id', user.id).single(),
+                supabase.from('offers').select('id, title, description, is_active, valid_days, b_valid_days, coupon_cap, first_batch_target, commission_amount, coupon_code_structure, offer_variables, vehicle_config, offer_identifier, issuance_window_type, issuance_start_date, issuance_end_date, issuance_window_days, m_redemption_window_type, m_redemption_start_date, m_redemption_end_date, b_redemption_window_type, b_redemption_start_date, b_redemption_end_date, loyalty_brand, referral_brand, loyalty_code, referral_code, loyalty_campaign_code, referral_campaign_code, publish_start_date, publish_end_date, activated_at').eq('id', id).single()
+            ])
+
+            const { data: profileData } = profileResult
+            const { data } = offerResult
 
             if (!profileData) {
                 router.push('/login')
@@ -38,17 +49,6 @@ export default function EditOfferPage() {
                 return
             }
 
-            const id = Array.isArray(params.id) ? params.id[0] : params.id
-            if (!id) {
-                setLoading(false)
-                return
-            }
-
-            const { data } = await supabase
-                .from('offers')
-                .select('*')
-                .eq('id', id)
-                .single()
             if (data) setOffer(data)
             setLoading(false)
         }

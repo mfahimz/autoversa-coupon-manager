@@ -58,6 +58,8 @@ interface AdvisorStat {
     commission: number
 }
 
+const LEADERBOARD_PAGE_SIZE = 10
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatDate(dateStr: string | null): string {
@@ -102,16 +104,33 @@ export default function OfferReportPage() {
 
     // Chart granularity
     const [granularity, setGranularity] = useState<'auto' | 'daily' | 'weekly'>('auto')
+    const [leaderboardPage, setLeaderboardPage] = useState(1)
+    const [offerStages, setOfferStages] = useState<{ stage_number: number; reward_label: string }[]>([])
 
     useEffect(() => { loadData() }, [offerId])
+
+    useEffect(() => {
+      setLeaderboardPage(1)
+    }, [dateFrom, dateTo])
 
     async function loadData() {
         setLoading(true)
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) { router.push('/login'); return }
 
-        const { data: profileData } = await supabase
-            .from('profiles').select('user_role, is_active').eq('id', user.id).single()
+        const [profileResult, offerResult, couponResult, apptResult, stagesResult] = await Promise.all([
+            supabase.from('profiles').select('user_role, is_active').eq('id', user.id).single(),
+            supabase.from('offers').select('id, title, is_active, coupon_cap, visited_count, commission_amount, issuance_start_date, issuance_end_date, first_batch_target, loyalty_brand, referral_brand').eq('id', offerId).single(),
+            supabase.from('coupons').select('id, coupon_type, stage, issue_date, advisor_name, advisor_code, issued_by, status').eq('offer_id', offerId).order('issue_date'),
+            supabase.from('appointments').select('id, coupon_id, status, appointment_date, sub_offer_name, created_at').eq('offer_id', offerId).order('appointment_date'),
+            supabase.from('offer_stages').select('stage_number, reward_label').eq('offer_id', offerId).order('stage_number'),
+        ])
+
+        const { data: profileData } = profileResult
+        const { data: offerData } = offerResult
+        const { data: couponData } = couponResult
+        const { data: apptData } = apptResult
+        const { data: stagesData } = stagesResult
 
         if (!profileData) {
             router.push('/login')
@@ -130,11 +149,7 @@ export default function OfferReportPage() {
             return
         }
 
-        const [{ data: offerData }, { data: couponData }, { data: apptData }] = await Promise.all([
-            supabase.from('offers').select('id, title, is_active, coupon_cap, visited_count, commission_amount, issuance_start_date, issuance_end_date, first_batch_target, loyalty_brand, referral_brand').eq('id', offerId).single(),
-            supabase.from('coupons').select('id, coupon_type, stage, issue_date, advisor_name, advisor_code, issued_by, status').eq('offer_id', offerId).order('issue_date'),
-            supabase.from('appointments').select('id, coupon_id, status, appointment_date, sub_offer_name, created_at').eq('offer_id', offerId).order('appointment_date'),
-        ])
+        if (stagesData) setOfferStages(stagesData)
 
         if (offerData) setOffer(offerData)
         if (couponData) setCoupons(couponData)
@@ -183,12 +198,18 @@ export default function OfferReportPage() {
     const commission = (offer?.commission_amount || 0) * visited.length
 
     // Stage funnel
-    const stageFunnel = [
-        { name: 'Stage 0 (No visits)', value: loyaltyCoupons.filter(c => (c.stage || 0) === 0).length, fill: '#E0E0E0' },
-        { name: 'Stage 1', value: loyaltyCoupons.filter(c => (c.stage || 0) >= 1).length, fill: '#0074BD' },
-        { name: 'Stage 2', value: loyaltyCoupons.filter(c => (c.stage || 0) >= 2).length, fill: '#7c3aed' },
-        { name: 'Stage 3', value: loyaltyCoupons.filter(c => (c.stage || 0) >= 3).length, fill: '#16a34a' },
-    ]
+    const stageFunnel = useMemo(() => {
+        const stageColors = ['#0074BD', '#7c3aed', '#16a34a', '#f59e0b', '#D0021B']
+        const result = [
+            { name: 'Stage 0 (No visits)', value: loyaltyCoupons.filter(c => (c.stage || 0) === 0).length, fill: '#E0E0E0' },
+            ...offerStages.map((s, i) => ({
+                name: `Stage ${s.stage_number}${s.reward_label ? ` — ${s.reward_label}` : ''}`,
+                value: loyaltyCoupons.filter(c => (c.stage || 0) >= s.stage_number).length,
+                fill: stageColors[i % stageColors.length],
+            })),
+        ]
+        return result
+    }, [loyaltyCoupons, offerStages])
 
     // Issuance over time
     const effectiveGranularity = useMemo((): 'daily' | 'weekly' => {
@@ -235,7 +256,7 @@ export default function OfferReportPage() {
     // Sub-offer breakdown
     const subOfferBreakdown = useMemo(() => {
         const map: Record<string, number> = {}
-        filteredAppts.forEach(a => {
+        filteredAppts.filter(a => a.status === 'visited').forEach(a => {
             const key = a.sub_offer_name || 'Not specified'
             map[key] = (map[key] || 0) + 1
         })
@@ -247,25 +268,36 @@ export default function OfferReportPage() {
     // Advisor leaderboard
     const advisorStats = useMemo((): AdvisorStat[] => {
         const map: Record<string, AdvisorStat> = {}
+
+        // Count coupons issued per advisor using issued_by (user ID) as key
         filteredCoupons.filter(c => c.coupon_type === 'LOYALTY').forEach(c => {
-            const key = c.advisor_name || 'Unknown'
-            if (!map[key]) map[key] = { name: key, code: c.advisor_code, issued: 0, visits: 0, commission: 0 }
+            const key = c.issued_by || 'unknown'
+            if (!map[key]) map[key] = { name: c.advisor_name || 'Unknown', code: c.advisor_code, issued: 0, visits: 0, commission: 0 }
             map[key].issued++
         })
-        // Count visits per advisor via Referral coupons
-        const referralCouponIds = new Set(referralCoupons.map(c => c.id))
-        filteredAppts.filter(a => a.status === 'visited').forEach(a => {
-            // Find the Referral coupon for this appointment
-            const referralCoupon = referralCoupons.find(c => c.id === a.coupon_id)
-            if (!referralCoupon) return
-            // Find the Loyalty coupon (same advisor)
-            const loyaltyCoupon = loyaltyCoupons.find(m => m.advisor_name === referralCoupon.advisor_name)
-            if (!loyaltyCoupon) return
-            const key = referralCoupon.advisor_name || 'Unknown'
-            if (!map[key]) map[key] = { name: key, code: referralCoupon.advisor_code, issued: 0, visits: 0, commission: 0 }
-            map[key].visits++
-            map[key].commission += offer?.commission_amount || 0
+
+        // Build a map of referral coupon id -> issued_by from loyalty coupons
+        // Each referral coupon shares the same issued_by as its paired loyalty coupon
+        const referralToAdvisor: Record<string, string> = {}
+        filteredCoupons.filter(c => c.coupon_type === 'REFERRAL').forEach(c => {
+            if (c.issued_by) referralToAdvisor[c.id] = c.issued_by
         })
+
+        // Count visits per advisor via referral coupon appointments
+        filteredAppts.filter(a => a.status === 'visited').forEach(a => {
+            if (!a.coupon_id) return
+            const advisorId = referralToAdvisor[a.coupon_id]
+            if (!advisorId) return
+            if (!map[advisorId]) return
+            map[advisorId].visits++
+            map[advisorId].commission += offer?.commission_amount || 0
+        })
+
+        // Remove 'unknown' advisor entry if it has no visits and name is Unknown
+        if (map['unknown'] && map['unknown'].name === 'Unknown' && map['unknown'].visits === 0) {
+            delete map['unknown']
+        }
+
         return Object.values(map).sort((a, b) => b.visits - a.visits)
     }, [filteredCoupons, filteredAppts, offer])
 
@@ -275,6 +307,9 @@ export default function OfferReportPage() {
         filteredAppts.forEach(a => { map[a.status] = (map[a.status] || 0) + 1 })
         return Object.entries(map).map(([status, count]) => ({ status, count }))
     }, [filteredAppts])
+
+    const leaderboardTotalPages = Math.ceil(advisorStats.length / LEADERBOARD_PAGE_SIZE)
+    const paginatedLeaderboard = advisorStats.slice((leaderboardPage - 1) * LEADERBOARD_PAGE_SIZE, leaderboardPage * LEADERBOARD_PAGE_SIZE)
 
     // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -305,7 +340,25 @@ export default function OfferReportPage() {
         )
     }
 
-    const capPct = offer.coupon_cap ? Math.min(((offer.visited_count || 0) / offer.coupon_cap) * 100, 100) : null
+    const capPct = offer.coupon_cap ? Math.min((visited.length / offer.coupon_cap) * 100, 100) : null
+
+    const kpiCards = [
+      { label: 'Total Issued', value: String(filteredCoupons.length), color: '#162860' },
+      { label: (offer.loyalty_brand || 'Loyalty') + ' Coupons', value: String(loyaltyCoupons.length), color: '#162860' },
+      { label: (offer.referral_brand || 'Referral') + ' Coupons', value: String(referralCoupons.length), color: '#0074BD' },
+      { label: 'Invoiced', value: String(visited.length), color: '#16a34a' },
+      { label: 'Conversion Rate', value: loyaltyCoupons.length > 0 ? ((visited.length / loyaltyCoupons.length) * 100).toFixed(1) + '%' : '—', color: '#0074BD' },
+      { label: 'Appointments', value: String(filteredAppts.length), color: '#f59e0b' },
+      { label: 'Commission Earned', value: 'AED ' + commission.toLocaleString(), color: '#16a34a' },
+      ...offerStages.map((s, i) => {
+        const stageColors = ['#0074BD', '#7c3aed', '#16a34a', '#f59e0b', '#D0021B']
+        return {
+          label: 'Stage ' + s.stage_number + (s.reward_label ? ' — ' + s.reward_label : '') + ' Reached',
+          value: String(loyaltyCoupons.filter(c => (c.stage || 0) >= s.stage_number).length),
+          color: stageColors[(s.stage_number - 1) % stageColors.length],
+        }
+      }),
+    ]
 
     return (
         <div style={{ minHeight: '100vh', backgroundColor: '#F7F7F7', paddingTop: '16px' }}>
@@ -335,7 +388,8 @@ export default function OfferReportPage() {
                             {offer.issuance_start_date && formatDate(offer.issuance_start_date)}
                             {offer.issuance_end_date && ` — ${formatDate(offer.issuance_end_date)}`}
                             {offer.coupon_cap && ` · Cap: ${offer.coupon_cap}`}
-                            {offer.commission_amount && ` · AED ${offer.commission_amount} per visit`}
+                            {offer.commission_amount && ` · AED ${offer.commission_amount} per visit`}{' '}
+                            · Commission and visit counts reflect the selected date range
                         </p>
                     </div>
                 </div>
@@ -369,17 +423,7 @@ export default function OfferReportPage() {
 
                 {/* KPI cards */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '14px', marginBottom: '28px' }}>
-                    {[
-                        { label: 'Total Issued', value: String(filteredCoupons.length), color: '#162860' },
-                        { label: (offer.loyalty_brand || 'Loyalty') + ' Coupons', value: String(loyaltyCoupons.length), color: '#162860' },
-                        { label: (offer.referral_brand || 'Referral') + ' Coupons', value: String(referralCoupons.length), color: '#0074BD' },
-                        { label: 'Invoiced', value: String(visited.length), color: '#16a34a' },
-                        { label: 'Appointments', value: String(filteredAppts.length), color: '#f59e0b' },
-                        { label: 'Commission Earned', value: `AED ${commission.toLocaleString()}`, color: '#16a34a' },
-                        { label: 'Stage 1+ Reached', value: String(loyaltyCoupons.filter(c => (c.stage || 0) >= 1).length), color: '#0074BD' },
-                        { label: 'Stage 2+ Reached', value: String(loyaltyCoupons.filter(c => (c.stage || 0) >= 2).length), color: '#7c3aed' },
-                        { label: 'Stage 3 Reached', value: String(loyaltyCoupons.filter(c => (c.stage || 0) >= 3).length), color: '#16a34a' },
-                    ].map(s => (
+                    {kpiCards.map(s => (
                         <div key={s.label} style={{ backgroundColor: '#FFFFFF', borderRadius: '14px', padding: '16px 18px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', borderLeft: `3px solid ${s.color}` }}>
                             <p style={{ fontSize: '11px', color: '#888', fontWeight: '500', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{s.label}</p>
                             <p style={{ fontSize: '22px', fontWeight: '700', color: s.color, margin: 0, lineHeight: 1 }}>{s.value}</p>
@@ -393,7 +437,7 @@ export default function OfferReportPage() {
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
                             <span style={{ fontSize: '13px', fontWeight: '600', color: '#1A1A1A' }}>Cap Utilisation</span>
                             <span style={{ fontSize: '13px', fontWeight: '700', color: capPct >= 90 ? '#D0021B' : '#1A1A1A' }}>
-                                {offer.visited_count || 0} / {offer.coupon_cap} ({capPct.toFixed(1)}%)
+                                {visited.length} / {offer.coupon_cap} ({capPct.toFixed(1)}%)
                             </span>
                         </div>
                         <div style={{ height: '10px', backgroundColor: '#E0E0E0', borderRadius: '100px', overflow: 'hidden' }}>
@@ -405,6 +449,24 @@ export default function OfferReportPage() {
                         </div>
                     </div>
                 )}
+
+                {/* Coupon status breakdown */}
+                <div style={{ backgroundColor: '#FFFFFF', borderRadius: '14px', padding: '20px 24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', marginBottom: '24px' }}>
+                  <h3 style={{ fontSize: '14px', fontWeight: '700', color: '#1A1A1A', margin: '0 0 16px' }}>Loyalty Coupon Status</h3>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '12px' }}>
+                    {[
+                      { label: 'Active', value: loyaltyCoupons.filter(c => c.status === 'ACTIVE').length, color: '#16a34a' },
+                      { label: 'Redeemed', value: loyaltyCoupons.filter(c => c.status === 'REDEEMED').length, color: '#0074BD' },
+                      { label: 'Expired', value: loyaltyCoupons.filter(c => c.status === 'EXPIRED').length, color: '#f59e0b' },
+                      { label: 'Cancelled', value: loyaltyCoupons.filter(c => c.status === 'CANCELLED').length, color: '#D0021B' },
+                    ].map(s => (
+                      <div key={s.label} style={{ backgroundColor: '#F7F7F7', borderRadius: '10px', padding: '12px 16px', borderLeft: `3px solid ${s.color}` }}>
+                        <p style={{ fontSize: '11px', color: '#888', fontWeight: '500', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{s.label}</p>
+                        <p style={{ fontSize: '20px', fontWeight: '700', color: s.color, margin: 0 }}>{s.value}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
 
                 {/* Charts grid */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '24px' }}>
@@ -523,38 +585,77 @@ export default function OfferReportPage() {
                     {advisorStats.length === 0 ? (
                         <div style={{ textAlign: 'center', padding: '32px', color: '#888', fontSize: '13px' }}>No data yet</div>
                     ) : (
-                        <div style={{ overflowX: 'auto' }}>
-                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                                <thead>
-                                    <tr style={{ backgroundColor: '#F7F7F7', borderBottom: '1px solid #E0E0E0' }}>
-                                        {['Rank', 'Advisor', 'Code', 'Coupons Issued', (offer.referral_brand || 'Referral') + ' Invoiced', 'Commission Earned'].map(h => (
-                                            <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontSize: '11px', fontWeight: '700', color: '#666', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</th>
-                                        ))}
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {advisorStats.map((a, i) => (
-                                        <tr key={a.name} style={{ borderBottom: '1px solid #F5F5F5' }}>
-                                            <td style={{ padding: '12px 16px' }}>
-                                                <span style={{
-                                                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                                                    width: '24px', height: '24px', borderRadius: '50%', fontSize: '12px', fontWeight: '700',
-                                                    backgroundColor: i === 0 ? '#f59e0b' : i === 1 ? '#94a3b8' : i === 2 ? '#b45309' : '#F0F0F0',
-                                                    color: i < 3 ? '#FFFFFF' : '#666',
-                                                }}>
-                                                    {i + 1}
-                                                </span>
-                                            </td>
-                                            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#1A1A1A' }}>{a.name}</td>
-                                            <td style={{ padding: '12px 16px', fontSize: '12px', color: '#666', fontFamily: 'monospace' }}>{a.code || '—'}</td>
-                                            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700', color: '#162860' }}>{a.issued}</td>
-                                            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700', color: '#16a34a' }}>{a.visits}</td>
-                                            <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700', color: '#f59e0b' }}>AED {a.commission.toLocaleString()}</td>
+                        <>
+                            <div style={{ overflowX: 'auto' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                    <thead>
+                                        <tr style={{ backgroundColor: '#F7F7F7', borderBottom: '1px solid #E0E0E0' }}>
+                                            {['Rank', 'Advisor', 'Code', 'Coupons Issued', (offer.referral_brand || 'Referral') + ' Invoiced', 'Commission Earned'].map(h => (
+                                                <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontSize: '11px', fontWeight: '700', color: '#666', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</th>
+                                            ))}
                                         </tr>
+                                    </thead>
+                                    <tbody>
+                                        {paginatedLeaderboard.map((a, i) => {
+                                            const rank = (leaderboardPage - 1) * LEADERBOARD_PAGE_SIZE + i + 1
+                                            const isTopThree = rank <= 3
+                                            return (
+                                                <tr key={a.name} style={{ borderBottom: '1px solid #F5F5F5' }}>
+                                                    <td style={{ padding: '12px 16px' }}>
+                                                        <span style={{
+                                                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                                            width: '24px', height: '24px', borderRadius: '50%', fontSize: '12px', fontWeight: '700',
+                                                            backgroundColor: rank === 1 ? '#f59e0b' : rank === 2 ? '#94a3b8' : rank === 3 ? '#b45309' : '#F0F0F0',
+                                                            color: isTopThree ? '#FFFFFF' : '#666',
+                                                        }}>
+                                                            {rank}
+                                                        </span>
+                                                    </td>
+                                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#1A1A1A' }}>{a.name}</td>
+                                                    <td style={{ padding: '12px 16px', fontSize: '12px', color: '#666', fontFamily: 'monospace' }}>{a.code || '—'}</td>
+                                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700', color: '#162860' }}>{a.issued}</td>
+                                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700', color: '#16a34a' }}>{a.visits}</td>
+                                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700', color: '#f59e0b' }}>AED {a.commission.toLocaleString()}</td>
+                                                </tr>
+                                            )
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {leaderboardTotalPages > 1 && (
+                                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', padding: '20px 0' }}>
+                                    <button
+                                        onClick={() => setLeaderboardPage(p => Math.max(1, p - 1))}
+                                        disabled={leaderboardPage === 1}
+                                        style={{ padding: '7px 14px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #E0E0E0', borderRadius: '8px', backgroundColor: '#FFFFFF', color: leaderboardPage === 1 ? '#CCC' : '#162860', cursor: leaderboardPage === 1 ? 'not-allowed' : 'pointer' }}
+                                    >
+                                        ← Prev
+                                    </button>
+                                    {Array.from({ length: leaderboardTotalPages }, (_, i) => i + 1).filter(p => p === 1 || p === leaderboardTotalPages || Math.abs(p - leaderboardPage) <= 2).map((p, idx, arr) => (
+                                        <span key={p}>
+                                            {idx > 0 && arr[idx - 1] !== p - 1 && <span style={{ color: '#888', fontSize: '13px', padding: '0 4px' }}>…</span>}
+                                            <button
+                                                onClick={() => setLeaderboardPage(p)}
+                                                style={{ padding: '7px 12px', fontSize: '13px', fontWeight: '600', border: '1.5px solid', borderColor: p === leaderboardPage ? '#0074BD' : '#E0E0E0', borderRadius: '8px', backgroundColor: p === leaderboardPage ? '#0074BD' : '#FFFFFF', color: p === leaderboardPage ? '#FFFFFF' : '#444', cursor: 'pointer', minWidth: '36px' }}
+                                            >
+                                                {p}
+                                            </button>
+                                        </span>
                                     ))}
-                                </tbody>
-                            </table>
-                        </div>
+                                    <button
+                                        onClick={() => setLeaderboardPage(p => Math.min(leaderboardTotalPages, p + 1))}
+                                        disabled={leaderboardPage === leaderboardTotalPages}
+                                        style={{ padding: '7px 14px', fontSize: '13px', fontWeight: '600', border: '1.5px solid #E0E0E0', borderRadius: '8px', backgroundColor: '#FFFFFF', color: leaderboardPage === leaderboardTotalPages ? '#CCC' : '#162860', cursor: leaderboardPage === leaderboardTotalPages ? 'not-allowed' : 'pointer' }}
+                                    >
+                                        Next →
+                                    </button>
+                                    <span style={{ fontSize: '12px', color: '#888', marginLeft: '8px' }}>
+                                        Page {leaderboardPage} of {leaderboardTotalPages}
+                                    </span>
+                                </div>
+                            )}
+                        </>
                     )}
                 </div>
 

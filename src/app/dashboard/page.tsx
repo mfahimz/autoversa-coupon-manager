@@ -11,9 +11,9 @@ import { maskMobileNumber } from '@/lib/utils'
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Profile {
-  id: string
+  id?: string
   full_name: string | null
-  email: string | null
+  email?: string | null
   user_role: string
   advisor_code: string | null
 }
@@ -35,6 +35,7 @@ interface LoyaltyCouponRow {
   advisor_name: string | null
   issued_by: string | null
   stage: number
+  stage_updated_at: string | null
   offer_id: string | null
   offer_title: string | null
   last_notified_at: string | null
@@ -137,6 +138,8 @@ function StatCard({ label, value, color, loading, format = 'number' }: {
   )
 }
 
+// ─── Recent coupon layout ───────────────────────────────────────────────────
+
 function RecentCouponRow({ coupon }: { coupon: any }) {
   const statusColors: Record<string, string> = {
     ACTIVE: '#0074BD', REDEEMED: '#16a34a', EXPIRED: '#666666', CANCELLED: '#D0021B',
@@ -175,6 +178,7 @@ export default function DashboardPage() {
   const [stagesByOffer, setStagesByOffer] = useState<Record<string, any[]>>({})
   const [brandsByOffer, setBrandsByOffer] = useState<Record<string, { loyalty_brand: string | null; referral_brand: string | null }>>({})
   const [rLoading, setRLoading] = useState(true)
+  const [loyaltyDashboardTab, setLoyaltyDashboardTab] = useState<'notify' | 'all_eligible'>('notify')
   const [rSearch, setRSearch] = useState('')
   const [notifying, setNotifying] = useState<string | null>(null)
 
@@ -214,8 +218,28 @@ export default function DashboardPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
 
-    const { data: profileData } = await supabase
-      .from('profiles').select('*').eq('id', user.id).single()
+    const today = new Date().toISOString().split('T')[0]
+
+    const [
+      profileResult,
+      advisorsResult,
+      statsResult,
+      recentResult
+    ] = await Promise.all([
+      supabase.from('profiles').select('user_role, full_name, advisor_code').eq('id', user.id).single(),
+      supabase
+        .from('profiles')
+        .select('id, full_name, advisor_code, user_role')
+        .in('user_role', ['SERVICE_ADVISOR', 'BMW_SERVICE_ADVISOR'])
+        .eq('is_active', true)
+        .order('full_name'),
+      (supabase as any).rpc('get_dashboard_stats'),
+      supabase.from('coupons')
+        .select('coupon_code, customer_name, advisor_name, issue_date, status')
+        .order('created_at', { ascending: false }).limit(8)
+    ])
+
+    const { data: profileData } = profileResult
     if (profileData) setProfile(profileData)
 
     const role = profileData?.user_role
@@ -226,12 +250,7 @@ export default function DashboardPage() {
     if (isAdmin || isReceptionist) loadReceptionistData()
 
     if (isAdmin) {
-      const { data: advisors } = await supabase
-        .from('profiles')
-        .select('id, full_name, advisor_code, user_role')
-        .in('user_role', ['SERVICE_ADVISOR', 'BMW_SERVICE_ADVISOR'])
-        .eq('is_active', true)
-        .order('full_name')
+      const { data: advisors } = advisorsResult
       setAdvisorList(advisors || [])
       loadAdminPipeline('all')
     }
@@ -239,22 +258,16 @@ export default function DashboardPage() {
     if (isAdvisor) loadAdvisorSelfData(user.id)
 
     if (!isReceptionist && !isAdvisor) {
-      const today = new Date().toISOString().split('T')[0]
-      const [
-        { count: total }, { count: active }, { count: redeemed },
-        { count: expired }, { count: advisors }, { count: todayCount },
-      ] = await Promise.all([
-        supabase.from('coupons').select('*', { count: 'exact', head: true }),
-        supabase.from('coupons').select('*', { count: 'exact', head: true }).eq('status', 'ACTIVE'),
-        supabase.from('coupons').select('*', { count: 'exact', head: true }).eq('status', 'REDEEMED'),
-        supabase.from('coupons').select('*', { count: 'exact', head: true }).eq('status', 'EXPIRED'),
-        supabase.from('profiles').select('*', { count: 'exact', head: true }).in('user_role', ['SERVICE_ADVISOR', 'BMW_SERVICE_ADVISOR']),
-        supabase.from('coupons').select('*', { count: 'exact', head: true }).gte('issue_date', today),
-      ])
-      setStats({ totalCoupons: total || 0, activeCoupons: active || 0, redeemedCoupons: redeemed || 0, expiredCoupons: expired || 0, todaysCoupons: todayCount || 0, totalAdvisors: advisors || 0 })
-      const { data: recent } = await supabase.from('coupons')
-        .select('coupon_code, customer_name, advisor_name, issue_date, status')
-        .order('created_at', { ascending: false }).limit(8)
+      const statsRow = statsResult.data?.[0]
+      setStats({
+        totalCoupons: statsRow?.total_coupons || 0,
+        activeCoupons: statsRow?.active_coupons || 0,
+        redeemedCoupons: statsRow?.redeemed_coupons || 0,
+        expiredCoupons: statsRow?.expired_coupons || 0,
+        todaysCoupons: statsRow?.today_coupons || 0,
+        totalAdvisors: statsRow?.total_advisors || 0,
+      })
+      const { data: recent } = recentResult
       setRecentCoupons(recent || [])
     }
 
@@ -276,39 +289,46 @@ export default function DashboardPage() {
       .from('coupons').select('id, parent_coupon_id')
       .in('parent_coupon_id', loyaltyCouponIds).eq('coupon_type', 'REFERRAL')
 
-    const { data: visitedAppts } = await supabase
-      .from('appointments').select('coupon_id').eq('status', 'visited')
+    const referralIds = (allReferralCoupons || []).map((c: any) => c.id)
+
+    const [visitedApptsResult, stagesResult, waResult, offersResult] = await Promise.all([
+      referralIds.length > 0
+        ? supabase.from('appointments').select('coupon_id').eq('status', 'visited').in('coupon_id', referralIds)
+        : Promise.resolve({ data: [] as any }),
+      offerIds.length > 0
+        ? supabase.from('offer_stages').select('offer_id, stage_number, reward_label, reward_description, bmw_visits_required').in('offer_id', offerIds).order('stage_number')
+        : Promise.resolve({ data: [] as any }),
+      offerIds.length > 0
+        ? supabase.from('offer_whatsapp_templates').select('offer_id, trigger_type, message_body').in('offer_id', offerIds).in('trigger_type', ['STAGE_1', 'STAGE_2', 'STAGE_3', 'STAGE_4', 'STAGE_5'])
+        : Promise.resolve({ data: [] as any }),
+      offerIds.length > 0
+        ? supabase.from('offers').select('id, loyalty_brand, referral_brand').in('id', offerIds)
+        : Promise.resolve({ data: [] as any })
+    ])
+
+    const visitedAppts = visitedApptsResult.data
+    const stagesData = stagesResult.data
+    const waTemplates = waResult.data
+    const offersData = offersResult.data
 
     const visitedCouponIds = new Set((visitedAppts || []).map((a: any) => a.coupon_id))
     const visitedCountByLoyalty: Record<string, number> = {}
-      ; (allReferralCoupons || []).forEach((b: any) => {
-        if (visitedCouponIds.has(b.id))
-          visitedCountByLoyalty[b.parent_coupon_id] = (visitedCountByLoyalty[b.parent_coupon_id] || 0) + 1
-      })
-
-    const { data: stagesData } = offerIds.length > 0
-      ? await supabase.from('offer_stages').select('offer_id, stage_number, reward_label, reward_description, bmw_visits_required').in('offer_id', offerIds).order('stage_number')
-      : { data: [] }
-
-    const { data: waTemplates } = offerIds.length > 0
-      ? await supabase.from('offer_whatsapp_templates').select('offer_id, trigger_type, message_body').in('offer_id', offerIds).in('trigger_type', ['STAGE_1', 'STAGE_2', 'STAGE_3', 'STAGE_4', 'STAGE_5'])
-      : { data: [] }
-
-    const { data: offersData } = offerIds.length > 0
-      ? await supabase.from('offers').select('id, loyalty_brand, referral_brand').in('id', offerIds)
-      : { data: [] }
+    ; (allReferralCoupons || []).forEach((b: any) => {
+      if (visitedCouponIds.has(b.id))
+        visitedCountByLoyalty[b.parent_coupon_id] = (visitedCountByLoyalty[b.parent_coupon_id] || 0) + 1
+    })
 
     const brandsMap: Record<string, { loyalty_brand: string | null; referral_brand: string | null }> = {}
-      ; (offersData || []).forEach((o: any) => { brandsMap[o.id] = { loyalty_brand: o.loyalty_brand, referral_brand: o.referral_brand } })
+    ; (offersData || []).forEach((o: any) => { brandsMap[o.id] = { loyalty_brand: o.loyalty_brand, referral_brand: o.referral_brand } })
 
     const stagesByOfferMap: Record<string, any[]> = {}
-      ; (stagesData || []).forEach((s: any) => {
-        if (!stagesByOfferMap[s.offer_id]) stagesByOfferMap[s.offer_id] = []
-        stagesByOfferMap[s.offer_id].push(s)
-      })
+    ; (stagesData || []).forEach((s: any) => {
+      if (!stagesByOfferMap[s.offer_id]) stagesByOfferMap[s.offer_id] = []
+      stagesByOfferMap[s.offer_id].push(s)
+    })
 
     const waByOfferAndStage: Record<string, string> = {}
-      ; (waTemplates || []).forEach((t: any) => { waByOfferAndStage[`${t.offer_id}_${t.trigger_type}`] = t.message_body })
+    ; (waTemplates || []).forEach((t: any) => { waByOfferAndStage[`${t.offer_id}_${t.trigger_type}`] = t.message_body })
 
     const rows: LoyaltyCouponRow[] = coupons.map((c: any) => {
       const stages = stagesByOfferMap[c.offer_id] || []
@@ -349,7 +369,7 @@ export default function DashboardPage() {
     try {
       const { data: coupons } = await supabase
         .from('coupons')
-        .select('id, coupon_code, plate_combined_string, mobile_number, advisor_name, issued_by, stage, offer_id, offer_title, last_notified_at')
+        .select('id, coupon_code, plate_combined_string, mobile_number, advisor_name, issued_by, stage, stage_updated_at, offer_id, offer_title, last_notified_at')
         .eq('coupon_type', 'LOYALTY').eq('status', 'ACTIVE')
         .order('offer_id').order('created_at', { ascending: false })
 
@@ -377,7 +397,7 @@ export default function DashboardPage() {
 
       const { data: coupons } = await supabase
         .from('coupons')
-        .select('id, coupon_code, plate_combined_string, mobile_number, advisor_name, issued_by, stage, offer_id, offer_title, last_notified_at')
+        .select('id, coupon_code, plate_combined_string, mobile_number, advisor_name, issued_by, stage, stage_updated_at, offer_id, offer_title, last_notified_at')
         .eq('coupon_type', 'LOYALTY')
         .eq('issued_by', userId)
         .order('offer_id').order('created_at', { ascending: false })
@@ -397,27 +417,32 @@ export default function DashboardPage() {
 
       // Compute total visits and commission for advisor KPIs
       const loyaltyIds = coupons.map((c: any) => c.id)
-      const { data: referralCoupons } = await supabase
-        .from('coupons').select('id, offer_id, parent_coupon_id')
-        .in('parent_coupon_id', loyaltyIds).eq('coupon_type', 'REFERRAL')
+      const offerIds = Array.from(new Set(coupons.map((c: any) => c.offer_id).filter(Boolean))) as string[]
+
+      const [referralResult, offersResult] = await Promise.all([
+        supabase
+          .from('coupons').select('id, offer_id, parent_coupon_id')
+          .in('parent_coupon_id', loyaltyIds).eq('coupon_type', 'REFERRAL'),
+        offerIds.length > 0
+          ? supabase.from('offers').select('id, commission_amount').in('id', offerIds)
+          : Promise.resolve({ data: [] as any })
+      ])
+
+      const referralCoupons = referralResult.data
+      const offersData = offersResult.data
 
       const referralIds = (referralCoupons || []).map((r: any) => r.id)
       const { data: visitedAppts } = referralIds.length > 0
         ? await supabase.from('appointments').select('coupon_id, offer_id').in('coupon_id', referralIds).eq('status', 'visited')
         : { data: [] }
 
-      const offerIds = Array.from(new Set(coupons.map((c: any) => c.offer_id).filter(Boolean))) as string[]
-      const { data: offersData } = offerIds.length > 0
-        ? await supabase.from('offers').select('id, commission_amount').in('id', offerIds)
-        : { data: [] }
-
       const commissionByOffer: Record<string, number> = {}
-        ; (offersData || []).forEach((o: any) => { commissionByOffer[o.id] = o.commission_amount || 0 })
+      ; (offersData || []).forEach((o: any) => { commissionByOffer[o.id] = o.commission_amount || 0 })
 
       const visitsPerOffer: Record<string, number> = {}
-        ; (visitedAppts || []).forEach((a: any) => {
-          if (a.offer_id) visitsPerOffer[a.offer_id] = (visitsPerOffer[a.offer_id] || 0) + 1
-        })
+      ; (visitedAppts || []).forEach((a: any) => {
+        if (a.offer_id) visitsPerOffer[a.offer_id] = (visitsPerOffer[a.offer_id] || 0) + 1
+      })
 
       let totalCommission = 0
       offerIds.forEach(oid => { totalCommission += (visitsPerOffer[oid] || 0) * (commissionByOffer[oid] || 0) })
@@ -442,7 +467,7 @@ export default function DashboardPage() {
 
       let query = supabase
         .from('coupons')
-        .select('id, coupon_code, plate_combined_string, mobile_number, advisor_name, issued_by, stage, offer_id, offer_title, last_notified_at')
+        .select('id, coupon_code, plate_combined_string, mobile_number, advisor_name, issued_by, stage, stage_updated_at, offer_id, offer_title, last_notified_at')
         .eq('coupon_type', 'LOYALTY')
         .order('offer_id').order('created_at', { ascending: false })
 
@@ -464,27 +489,32 @@ export default function DashboardPage() {
 
       // Compute stats
       const loyaltyIds = coupons.map((c: any) => c.id)
-      const { data: referralCoupons } = await supabase
-        .from('coupons').select('id, offer_id, parent_coupon_id')
-        .in('parent_coupon_id', loyaltyIds).eq('coupon_type', 'REFERRAL')
+      const offerIds = Array.from(new Set(coupons.map((c: any) => c.offer_id).filter(Boolean))) as string[]
+
+      const [referralResult, offersResult] = await Promise.all([
+        supabase
+          .from('coupons').select('id, offer_id, parent_coupon_id')
+          .in('parent_coupon_id', loyaltyIds).eq('coupon_type', 'REFERRAL'),
+        offerIds.length > 0
+          ? supabase.from('offers').select('id, commission_amount').in('id', offerIds)
+          : Promise.resolve({ data: [] as any })
+      ])
+
+      const referralCoupons = referralResult.data
+      const offersData = offersResult.data
 
       const referralIds = (referralCoupons || []).map((r: any) => r.id)
       const { data: visitedAppts } = referralIds.length > 0
         ? await supabase.from('appointments').select('coupon_id, offer_id').in('coupon_id', referralIds).eq('status', 'visited')
         : { data: [] }
 
-      const offerIds = Array.from(new Set(coupons.map((c: any) => c.offer_id).filter(Boolean))) as string[]
-      const { data: offersData } = offerIds.length > 0
-        ? await supabase.from('offers').select('id, commission_amount').in('id', offerIds)
-        : { data: [] }
-
       const commissionByOffer: Record<string, number> = {}
-        ; (offersData || []).forEach((o: any) => { commissionByOffer[o.id] = o.commission_amount || 0 })
+      ; (offersData || []).forEach((o: any) => { commissionByOffer[o.id] = o.commission_amount || 0 })
 
       const visitsPerOffer: Record<string, number> = {}
-        ; (visitedAppts || []).forEach((a: any) => {
-          if (a.offer_id) visitsPerOffer[a.offer_id] = (visitsPerOffer[a.offer_id] || 0) + 1
-        })
+      ; (visitedAppts || []).forEach((a: any) => {
+        if (a.offer_id) visitsPerOffer[a.offer_id] = (visitsPerOffer[a.offer_id] || 0) + 1
+      })
 
       let totalCommission = 0
       offerIds.forEach(oid => { totalCommission += (visitsPerOffer[oid] || 0) * (commissionByOffer[oid] || 0) })
@@ -515,7 +545,9 @@ export default function DashboardPage() {
       .replace(/\[LOYALTY_COUPON_CODE\]/g, row.coupon_code)
       .replace(/\[STAGE\]/g, String(row.stage))
       .replace(/\[REWARD_LABEL\]/g, row.reward_label || '')
-    window.open(`https://wa.me/971${row.mobile_number}?text=${encodeURIComponent(message)}`, '_blank')
+    // WhatsApp Web direct link — always use web.whatsapp.com/send?phone=...&text=... format for browser-based usage
+    // Never use wa.me links — they trigger WhatsApp's redirect page before opening
+    window.open(`https://web.whatsapp.com/send?phone=971${row.mobile_number}&text=${encodeURIComponent(message)}`, '_blank')
     setNotifying(row.id)
     const { error } = await supabase.from('coupons').update({ last_notified_at: new Date().toISOString() }).eq('id', row.id)
     if (!error) {
@@ -541,11 +573,27 @@ export default function DashboardPage() {
     pages: Record<string, number>,
     setPages: (fn: (prev: Record<string, number>) => Record<string, number>) => void,
     showWhatsApp: boolean,
-    showAdvisorCol: boolean
+    showAdvisorCol: boolean,
+    showLastNotified: boolean,
+    loyaltyTab: 'notify' | 'all_eligible'
   ) {
     const filtered = groups.map(group => ({
       ...group,
       rows: group.rows.filter(r => {
+        // Tab filter
+        if (loyaltyTab === 'notify') {
+          // Show rows that need notification:
+          // - stage >= 1 (has met eligibility)
+          // - AND either never notified OR notified before the last stage change
+          if ((r.stage ?? 0) < 1) return false
+          const needsNotification = !r.last_notified_at ||
+            (r.stage_updated_at && r.last_notified_at < r.stage_updated_at)
+          if (!needsNotification) return false
+        } else {
+          // all_eligible: show all rows with stage >= 1
+          if ((r.stage ?? 0) < 1) return false
+        }
+        // Search filter
         if (!search.trim()) return true
         const q = search.toLowerCase()
         return (
@@ -560,14 +608,18 @@ export default function DashboardPage() {
     if (filtered.length === 0) {
       return (
         <div style={{ textAlign: 'center', padding: '48px', backgroundColor: '#FFFFFF', borderRadius: '16px', color: '#666', fontSize: '14px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-          {search ? 'No customers match your search.' : 'No active loyalty coupons yet.'}
+          {search
+            ? 'No customers match your search.'
+            : loyaltyTab === 'notify'
+              ? 'No customers pending notification. All eligible customers have been notified.'
+              : 'No eligible loyalty customers yet.'}
         </div>
       )
     }
 
     const cols = showAdvisorCol
-      ? '1.2fr 1fr 1fr 1fr 1.4fr 1.2fr 120px'
-      : '1.4fr 1.2fr 1.2fr 1fr 1.6fr 1.2fr 120px'
+      ? (showLastNotified ? '1.2fr 1fr 1fr 1fr 1.4fr 1.2fr 120px' : '1.2fr 1fr 1fr 1fr 1.8fr 120px')
+      : (showLastNotified ? '1.4fr 1.2fr 1.2fr 1fr 1.6fr 1.2fr 120px' : '1.4fr 1.2fr 1.2fr 1fr 2fr 120px')
 
     const headers = [
       (brands[filtered[0]?.offer_id]?.loyalty_brand || 'Loyalty') + ' Plate',
@@ -575,7 +627,7 @@ export default function DashboardPage() {
       'Mobile',
       (brands[filtered[0]?.offer_id]?.referral_brand || 'Referral') + ' Referrals',
       'Eligible Reward',
-      'Last Notified',
+      ...(showLastNotified ? ['Last Notified'] : []),
       ...(showWhatsApp ? ['Action'] : []),
     ]
 
@@ -595,8 +647,8 @@ export default function DashboardPage() {
           const pageRows = group.rows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
 
           const groupCols = showAdvisorCol
-            ? '1.2fr 1fr 1fr 1fr 1.4fr 1.2fr 120px'
-            : '1.4fr 1.2fr 1.2fr 1fr 1.6fr 1.2fr 120px'
+            ? (showLastNotified ? '1.2fr 1fr 1fr 1fr 1.4fr 1.2fr 120px' : '1.2fr 1fr 1fr 1fr 1.8fr 120px')
+            : (showLastNotified ? '1.4fr 1.2fr 1.2fr 1fr 1.6fr 1.2fr 120px' : '1.4fr 1.2fr 1.2fr 1fr 2fr 120px')
 
           const groupHeaders = [
             (brands[group.offer_id]?.loyalty_brand || 'Loyalty') + ' Plate',
@@ -604,7 +656,7 @@ export default function DashboardPage() {
             'Mobile',
             (brands[group.offer_id]?.referral_brand || 'Referral') + ' Referrals',
             'Eligible Reward',
-            'Last Notified',
+            ...(showLastNotified ? ['Last Notified'] : []),
             ...(showWhatsApp ? ['Action'] : []),
           ]
 
@@ -676,19 +728,27 @@ export default function DashboardPage() {
                           <span style={{ fontSize: '12px', color: '#888' }}>No reward yet</span>
                         )}
                       </div>
-                      <div>
-                        {row.last_notified_at ? (() => {
-                          const val = row.last_notified_at
-                          return (
-                            <>
-                              <p style={{ fontSize: '12px', color: '#444', margin: 0 }}>{formatDate(val)}</p>
-                              <p style={{ fontSize: '11px', color: '#888', margin: '2px 0 0' }}>{new Date(val).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</p>
-                            </>
-                          )
-                        })() : (
-                          <span style={{ fontSize: '12px', color: '#888' }}>Never</span>
-                        )}
-                      </div>
+                      {showLastNotified && (
+                        <div>
+                          {row.last_notified_at ? (() => {
+                            const val = row.last_notified_at
+                            const notifiedBeforeStageChange = row.stage_updated_at && val < row.stage_updated_at
+                            return (
+                              <>
+                                <p style={{ fontSize: '12px', color: '#444', margin: 0 }}>{formatDate(val)}</p>
+                                <p style={{ fontSize: '11px', color: '#888', margin: '2px 0 0' }}>{new Date(val).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</p>
+                                {notifiedBeforeStageChange && (
+                                  <span style={{ display: 'inline-block', fontSize: '10px', fontWeight: '700', color: '#f59e0b', backgroundColor: '#fef3c7', padding: '2px 7px', borderRadius: '100px', marginTop: '3px' }}>
+                                    New stage reached
+                                  </span>
+                                )}
+                              </>
+                            )
+                          })() : (
+                            <span style={{ fontSize: '12px', color: '#888' }}>Never</span>
+                          )}
+                        </div>
+                      )}
                       {showWhatsApp && (
                         <button
                           onClick={() => sendWhatsApp(row)}
@@ -863,6 +923,26 @@ export default function DashboardPage() {
             <h2 style={{ fontSize: '22px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>Loyalty Rewards Dashboard</h2>
             <p style={{ color: '#666', fontSize: '14px', marginTop: '4px' }}>Loyalty customers eligible for rewards based on referral visits.</p>
           </div>
+          <div style={{ display: 'flex', gap: '4px', marginBottom: '16px', backgroundColor: '#FFFFFF', padding: '5px', borderRadius: '10px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', width: 'fit-content' }}>
+            {([
+              { key: 'notify', label: '🔔 Pending Notification' },
+              { key: 'all_eligible', label: '✅ All Eligible' },
+            ] as { key: 'notify' | 'all_eligible'; label: string }[]).map(t => (
+              <button
+                key={t.key}
+                onClick={() => setLoyaltyDashboardTab(t.key)}
+                style={{
+                  padding: '7px 16px', border: 'none', borderRadius: '7px',
+                  fontSize: '13px', fontWeight: '600', cursor: 'pointer',
+                  backgroundColor: loyaltyDashboardTab === t.key ? '#162860' : 'transparent',
+                  color: loyaltyDashboardTab === t.key ? '#FFFFFF' : '#666',
+                  transition: 'all 0.15s',
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
           <div style={{ marginBottom: '20px' }}>
             <input value={rSearch} onChange={e => setRSearch(e.target.value)} placeholder="Search by plate, advisor, mobile, coupon code…"
               style={{ width: '100%', padding: '10px 14px', fontSize: '14px', border: '1.5px solid #E0E0E0', borderRadius: '10px', outline: 'none', backgroundColor: '#FFFFFF', color: '#1A1A1A', boxSizing: 'border-box' }} />
@@ -871,7 +951,7 @@ export default function DashboardPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {Array.from({ length: 3 }).map((_, i) => <div key={i} style={{ height: '120px', backgroundColor: '#F0F0F0', borderRadius: '14px', animation: 'pulse 1.5s ease-in-out infinite' }} />)}
             </div>
-          ) : renderLoyaltyTable(offerGroups, stagesByOffer, brandsByOffer, rSearch, receptionistPages, setReceptionistPages, true, false)}
+          ) : renderLoyaltyTable(offerGroups, stagesByOffer, brandsByOffer, rSearch, receptionistPages, setReceptionistPages, true, false, true, loyaltyDashboardTab)}
         </main>
       </div>
     )
@@ -990,6 +1070,26 @@ export default function DashboardPage() {
               <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>Loyalty Rewards Dashboard</h2>
               <p style={{ color: '#666', fontSize: '14px', marginTop: '4px' }}>Loyalty customers eligible for rewards based on referral visits.</p>
             </div>
+            <div style={{ display: 'flex', gap: '4px', marginBottom: '16px', backgroundColor: '#FFFFFF', padding: '5px', borderRadius: '10px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', width: 'fit-content' }}>
+              {([
+                { key: 'notify', label: '🔔 Pending Notification' },
+                { key: 'all_eligible', label: '✅ All Eligible' },
+              ] as { key: 'notify' | 'all_eligible'; label: string }[]).map(t => (
+                <button
+                  key={t.key}
+                  onClick={() => setLoyaltyDashboardTab(t.key)}
+                  style={{
+                    padding: '7px 16px', border: 'none', borderRadius: '7px',
+                    fontSize: '13px', fontWeight: '600', cursor: 'pointer',
+                    backgroundColor: loyaltyDashboardTab === t.key ? '#162860' : 'transparent',
+                    color: loyaltyDashboardTab === t.key ? '#FFFFFF' : '#666',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
             <div style={{ marginBottom: '20px' }}>
               <input value={rSearch} onChange={e => setRSearch(e.target.value)} placeholder="Search by plate, advisor, mobile, coupon code…"
                 style={{ width: '100%', padding: '10px 14px', fontSize: '14px', border: '1.5px solid #E0E0E0', borderRadius: '10px', outline: 'none', backgroundColor: '#FFFFFF', color: '#1A1A1A', boxSizing: 'border-box' }} />
@@ -998,7 +1098,7 @@ export default function DashboardPage() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 {Array.from({ length: 3 }).map((_, i) => <div key={i} style={{ height: '120px', backgroundColor: '#F0F0F0', borderRadius: '14px', animation: 'pulse 1.5s ease-in-out infinite' }} />)}
               </div>
-            ) : renderLoyaltyTable(offerGroups, stagesByOffer, brandsByOffer, rSearch, receptionistPages, setReceptionistPages, true, false)}
+            ) : renderLoyaltyTable(offerGroups, stagesByOffer, brandsByOffer, rSearch, receptionistPages, setReceptionistPages, true, false, true, loyaltyDashboardTab)}
 
             {/* Service Advisor Dashboard */}
             <div style={{ marginTop: '48px' }}>
@@ -1058,7 +1158,7 @@ export default function DashboardPage() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   {Array.from({ length: 2 }).map((_, i) => <div key={i} style={{ height: '200px', backgroundColor: '#F0F0F0', borderRadius: '14px', animation: 'pulse 1.5s ease-in-out infinite' }} />)}
                 </div>
-              ) : renderLoyaltyTable(adminPipelineGroups, adminPipelineStages, adminPipelineBrands, adminPipelineSearch, advisorPipelinePages, setAdvisorPipelinePages, false, selectedAdvisorId === 'all')}
+              ) : renderLoyaltyTable(adminPipelineGroups, adminPipelineStages, adminPipelineBrands, adminPipelineSearch, advisorPipelinePages, setAdvisorPipelinePages, false, selectedAdvisorId === 'all', false, 'all_eligible')}
             </div>
           </>
         )}
