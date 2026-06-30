@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/layout/Navbar'
 import Breadcrumb from '@/components/layout/Breadcrumb'
+import PageSkeleton from '@/components/layout/PageSkeleton'
 import { loadPermissionsForRole, checkPermission, PERMISSIONS_REGISTRY } from '@/lib/permissions'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -298,6 +299,8 @@ export default function UsersPage() {
   const enabledPages = PERMISSIONS_REGISTRY.filter(p => permissions[p.resource + '||view']).length
   const enabledActions = PERMISSIONS_REGISTRY.flatMap(p => p.actions).filter(a => permissions[a.resource + '||action']).length
 
+  if (loading) return <PageSkeleton layout="stats-table" />
+
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F7F7F7', paddingTop: '16px' }}>
       <style>{`
@@ -346,13 +349,7 @@ export default function UsersPage() {
                 ))}
               </div>
 
-              {loading ? (
-                <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {Array.from({ length: 5 }).map((_, i) => (
-                    <div key={i} style={{ height: '52px', backgroundColor: '#F0F0F0', borderRadius: '8px', animation: 'pulse 1.5s ease-in-out infinite' }} />
-                  ))}
-                </div>
-              ) : users.length === 0 ? (
+              {users.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '64px', color: '#666', fontSize: '14px' }}>No users found.</div>
               ) : (
                 paginatedUsers.map((user, i) => {
@@ -509,7 +506,8 @@ export default function UsersPage() {
               borderRadius: '14px', padding: '16px 24px',
               boxShadow: '0 1px 4px rgba(0,0,0,0.06)', marginBottom: '24px',
               border: hasUnsavedChanges ? '1.5px solid #f59e0b' : '1.5px solid transparent',
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px',
+              display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '12px',
+              justifyContent: 'space-between',
               transition: 'all 0.2s',
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>

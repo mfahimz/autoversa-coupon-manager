@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { loadPermissionsForRole, checkPermission, PermissionsMap } from '@/lib/permissions'
+import autoversaLogo from '@/assets/AutoVersa_logo_fav.png'
 
 const ALL_NAV_ITEMS = [
     { label: 'Dashboard', href: '/dashboard', resource: 'page:dashboard' },
@@ -28,6 +29,7 @@ export default function Navbar() {
     const [role, setRole] = useState<string>('')
     const [permissions, setPermissions] = useState<PermissionsMap>({})
     const [permissionsLoaded, setPermissionsLoaded] = useState(false)
+    const closeDropdownTimer = useRef<NodeJS.Timeout | null>(null)
 
     useEffect(() => {
         async function init() {
@@ -175,7 +177,7 @@ export default function Navbar() {
                 }}>
 
                     <img
-                        src="/autoversa_temp_logo.jpeg"
+                        src={autoversaLogo.src}
                         alt="AutoVersa"
                         onClick={() => router.push('/dashboard')}
                         style={{ height: '32px', objectFit: 'contain', cursor: 'pointer', flexShrink: 0, borderRadius: '6px' }}
@@ -217,8 +219,13 @@ export default function Navbar() {
                                 {showAdminDropdown && (
                                     <div
                                         style={{ position: 'relative' }}
-                                        onMouseEnter={() => setOpenDropdown('admin')}
-                                        onMouseLeave={() => setOpenDropdown(null)}
+                                        onMouseEnter={() => {
+                                            if (closeDropdownTimer.current) clearTimeout(closeDropdownTimer.current)
+                                            setOpenDropdown('admin')
+                                        }}
+                                        onMouseLeave={() => {
+                                            closeDropdownTimer.current = setTimeout(() => setOpenDropdown(null), 200)
+                                        }}
                                     >
                                         <button
                                             style={{
@@ -239,21 +246,29 @@ export default function Navbar() {
                                         </button>
 
                                         {openDropdown === 'admin' && (
-                                            <div style={{
-                                                position: 'absolute',
-                                                top: 'calc(100% + 8px)',
-                                                left: '50%',
-                                                transform: 'translateX(-50%)',
-                                                borderRadius: '20px',
-                                                padding: '8px',
-                                                minWidth: '180px',
-                                                background: 'linear-gradient(160deg, rgba(22,40,96,0.92) 0%, rgba(0,116,189,0.7) 100%)',
-                                                backdropFilter: 'blur(24px) saturate(180%)',
-                                                WebkitBackdropFilter: 'blur(24px) saturate(180%)',
-                                                border: '1px solid rgba(255,255,255,0.12)',
-                                                boxShadow: '0 8px 32px rgba(22,40,96,0.4), 0 2px 8px rgba(0,116,189,0.2)',
-                                                zIndex: 200,
-                                            }}>
+                                            <div
+                                                style={{
+                                                    position: 'absolute',
+                                                    top: 'calc(100% + 8px)',
+                                                    left: '50%',
+                                                    transform: 'translateX(-50%)',
+                                                    borderRadius: '20px',
+                                                    padding: '8px',
+                                                    minWidth: '180px',
+                                                    background: 'linear-gradient(160deg, rgba(22,40,96,0.92) 0%, rgba(0,116,189,0.7) 100%)',
+                                                    backdropFilter: 'blur(24px) saturate(180%)',
+                                                    WebkitBackdropFilter: 'blur(24px) saturate(180%)',
+                                                    border: '1px solid rgba(255,255,255,0.12)',
+                                                    boxShadow: '0 8px 32px rgba(22,40,96,0.4), 0 2px 8px rgba(0,116,189,0.2)',
+                                                    zIndex: 200,
+                                                }}
+                                                onMouseEnter={() => {
+                                                    if (closeDropdownTimer.current) clearTimeout(closeDropdownTimer.current)
+                                                }}
+                                                onMouseLeave={() => {
+                                                    closeDropdownTimer.current = setTimeout(() => setOpenDropdown(null), 200)
+                                                }}
+                                            >
                                                 {(role === 'ADMIN' ? ADMIN_DROPDOWN : visibleAdminItems).map(child => (
                                                     <button
                                                         key={child.href}

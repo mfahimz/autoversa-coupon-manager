@@ -520,7 +520,7 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
             coupon_code_structure: form.coupon_code_structure.trim() || null,
             offer_variables: form.offer_variables.length > 0 ? JSON.stringify(form.offer_variables) : null,
             is_active: form.is_active,
-            coupon_cap: Number(form.coupon_cap) || 800,
+            coupon_cap: Number(form.coupon_cap) || 0,
             first_batch_target: Number(form.first_batch_target),
             vehicle_config: JSON.stringify({ make: form.vehicle_make }),
             publish_start_date: form.issuance_window_type === 'date_range' ? (form.issuance_start_date || null) : null,
@@ -556,9 +556,17 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
         // saveOneTemplate returns boolean — abort entire save if a template upload fails
         // TODO: templates.coupon_type still uses M/B — migration deferred
         const mOk = await saveOneTemplate(offerId, 'M', mTemplate)
-        if (!mOk) { setSaving(false); return }
+        if (!mOk) {
+            if (mode === 'create') await supabase.from('offers').delete().eq('id', offerId)
+            setSaving(false)
+            return
+        }
         const bOk = await saveOneTemplate(offerId, 'B', bTemplate)
-        if (!bOk) { setSaving(false); return }
+        if (!bOk) {
+            if (mode === 'create') await supabase.from('offers').delete().eq('id', offerId)
+            setSaving(false)
+            return
+        }
 
         await saveSubOffers(offerId)
         await saveStages(offerId)

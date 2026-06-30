@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/layout/Navbar'
+import PageSkeleton from '@/components/layout/PageSkeleton'
 import { maskMobileNumber } from '@/lib/utils'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -911,6 +912,8 @@ export default function DashboardPage() {
   )
   const styleEl = <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } } @keyframes slideIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }`}</style>
 
+  if (loading) return <PageSkeleton layout="stats-table" />
+
   // ─── RECEPTIONIST ─────────────────────────────────────────────────────────
 
   if (isReceptionist) {
@@ -967,19 +970,14 @@ export default function DashboardPage() {
         <main style={{ padding: '0 32px 48px' }}>
           {/* Header */}
           <div style={{ marginBottom: '28px' }}>
-            {loading
-              ? <div style={{ height: '28px', width: '240px', backgroundColor: '#E0E0E0', borderRadius: '8px', animation: 'pulse 1.5s ease-in-out infinite' }} />
-              : (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                  <h1 style={{ fontSize: '22px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>Good {getGreeting()}, {profile?.full_name?.split(' ')[0] || 'there'} 👋</h1>
-                  {profile?.advisor_code && (
-                    <span style={{ fontSize: '12px', fontWeight: '700', fontFamily: 'monospace', padding: '4px 12px', borderRadius: '100px', backgroundColor: '#EEF2FF', color: '#162860', border: '1px solid #C7D2FE' }}>
-                      {profile.advisor_code}
-                    </span>
-                  )}
-                </div>
-              )
-            }
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+              <h1 style={{ fontSize: '22px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>Good {getGreeting()}, {profile?.full_name?.split(' ')[0] || 'there'} 👋</h1>
+              {profile?.advisor_code && (
+                <span style={{ fontSize: '12px', fontWeight: '700', fontFamily: 'monospace', padding: '4px 12px', borderRadius: '100px', backgroundColor: '#EEF2FF', color: '#162860', border: '1px solid #C7D2FE' }}>
+                  {profile.advisor_code}
+                </span>
+              )}
+            </div>
             <p style={{ color: '#666666', fontSize: '14px', marginTop: '6px' }}>
               {new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}
             </p>
@@ -1030,10 +1028,7 @@ export default function DashboardPage() {
       <Navbar />
       <main style={{ padding: '0 32px 48px' }}>
         <div style={{ marginBottom: '32px' }}>
-          {loading
-            ? <div style={{ height: '28px', width: '240px', backgroundColor: '#E0E0E0', borderRadius: '8px', animation: 'pulse 1.5s ease-in-out infinite' }} />
-            : <h1 style={{ fontSize: '22px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>Good {getGreeting()}, {profile?.full_name?.split(' ')[0] || 'there'} 👋</h1>
-          }
+          <h1 style={{ fontSize: '22px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>Good {getGreeting()}, {profile?.full_name?.split(' ')[0] || 'there'} 👋</h1>
           <p style={{ color: '#666666', fontSize: '14px', marginTop: '6px' }}>
             {new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}
           </p>

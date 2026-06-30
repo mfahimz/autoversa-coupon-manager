@@ -3,12 +3,17 @@ import { Inter } from 'next/font/google'
 import { AppSplash } from '@/components/layout/AppSplash'
 import { TopLoaderWrapper } from '@/components/layout/TopLoaderWrapper'
 import './globals.css'
+import autoversaLogo from '@/assets/AutoVersa_logo_fav.png'
 
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
   title: 'AutoVersa Coupon Manager',
   description: 'AutoVersa Coupon Management System',
+  icons: {
+    icon: autoversaLogo.src,
+    apple: autoversaLogo.src,
+  },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

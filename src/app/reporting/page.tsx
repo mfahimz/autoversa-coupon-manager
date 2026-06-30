@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/layout/Navbar'
 import Breadcrumb from '@/components/layout/Breadcrumb'
+import PageSkeleton from '@/components/layout/PageSkeleton'
 import { loadPermissionsForRole, checkPermission } from '@/lib/permissions'
 
 
@@ -115,6 +116,8 @@ export default function ReportingPage() {
     setLoading(false)
   }
 
+  if (loading) return <PageSkeleton layout="cards" />
+
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F7F7F7', paddingTop: '16px' }}>
       <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }`}</style>
@@ -129,13 +132,7 @@ export default function ReportingPage() {
           </p>
         </div>
 
-        {loading ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} style={{ height: '140px', backgroundColor: '#E0E0E0', borderRadius: '16px', animation: 'pulse 1.5s ease-in-out infinite' }} />
-            ))}
-          </div>
-        ) : offers.length === 0 ? (
+        {offers.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '64px', color: '#666', fontSize: '14px' }}>
             No offers created yet.
           </div>

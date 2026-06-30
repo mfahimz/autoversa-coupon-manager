@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/layout/Navbar'
 import Breadcrumb from '@/components/layout/Breadcrumb'
+import PageSkeleton from '@/components/layout/PageSkeleton'
 import { loadPermissionsForRole, checkPermission } from '@/lib/permissions'
 
 
@@ -214,7 +215,6 @@ export default function CouponsPage() {
       referral_brand: c.offers?.referral_brand || null,
     }))
     setCoupons(mappedCoupons)
-    // CHANGE 2: Computed inside render — derive unique offers from loaded coupons for the filter dropdown
 
     const couponIds = mappedCoupons.map(c => c.id)
     const referralIds = mappedCoupons.filter(c => c.coupon_type === 'REFERRAL').map(c => c.id)
@@ -329,14 +329,12 @@ export default function CouponsPage() {
       .eq('is_active', true)
     if (data) {
       const map: Record<string, TemplateData> = {}
-      // TODO: templates.coupon_type still uses M/B — migration deferred
       data.forEach((t: any) => { map[t.coupon_type === 'M' ? 'LOYALTY' : t.coupon_type === 'B' ? 'REFERRAL' : t.coupon_type] = t })
       setDlTemplates(map)
     }
     setDlTemplatesLoading(false)
   }
 
-  // CHANGE 8: Fix downloadCouponJPG to use percentage-based font sizes and correct text anchoring
   async function downloadCouponJPG(coupon: Coupon, templateType: 'LOYALTY' | 'REFERRAL') {
     const template = dlTemplates[templateType]
     if (!template?.file_url) {
@@ -497,7 +495,7 @@ export default function CouponsPage() {
     return { label: 'Not Valid', color: '#666', bg: '#f3f4f6', eligible: false }
   }
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  if (loading) return <PageSkeleton layout="stats-table" />
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F7F7F7', paddingTop: '16px' }}>
@@ -531,7 +529,7 @@ export default function CouponsPage() {
             <h1 style={{ fontSize: '22px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>Coupons</h1>
             <p style={{ color: '#666', fontSize: '14px', marginTop: '4px' }}>
               {pageTab === 'my_coupons'
-                ? (loading ? '...' : `${filtered.length} of ${coupons.length} coupons`)
+                ? `${filtered.length} of ${coupons.length} coupons`
                 : 'Verify loyalty coupon eligibility'}
             </p>
           </div>
@@ -600,10 +598,7 @@ export default function CouponsPage() {
                     <p style={{ fontSize: '11px', color: isActive ? accent : '#666', fontWeight: '600', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                       {KPI_LABELS[tab]}
                     </p>
-                    {loading
-                      ? <div style={{ height: '28px', width: '48px', backgroundColor: '#F0F0F0', borderRadius: '6px', animation: 'pulse 1.5s ease-in-out infinite' }} />
-                      : <p style={{ fontSize: '26px', fontWeight: '700', color: isActive ? accent : '#1A1A1A', margin: 0, lineHeight: 1 }}>{count}</p>
-                    }
+                    <p style={{ fontSize: '26px', fontWeight: '700', color: isActive ? accent : '#1A1A1A', margin: 0, lineHeight: 1 }}>{count}</p>
                   </div>
                 )
               })}
@@ -711,13 +706,7 @@ export default function CouponsPage() {
                 ))}
               </div>
 
-              {loading ? (
-                <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {Array.from({ length: 6 }).map((_, i) => (
-                    <div key={i} style={{ height: '52px', backgroundColor: '#F0F0F0', borderRadius: '8px', animation: 'pulse 1.5s ease-in-out infinite' }} />
-                  ))}
-                </div>
-              ) : filtered.length === 0 ? (
+              {filtered.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '64px 0', color: '#666', fontSize: '14px' }}>
                   {search || filterType !== 'all' || filterStatus !== 'all' || filterOffer !== 'all' || filterDateFrom || filterDateTo || kpiTab !== 'total' ? 'No coupons match your filters.' : 'No coupons yet. '}
                   {!search && filterType === 'all' && filterStatus === 'all' && filterOffer === 'all' && !filterDateFrom && !filterDateTo && kpiTab === 'total' && (
@@ -859,7 +848,6 @@ export default function CouponsPage() {
                             + Appt
                           </button>
                         )}
-                        {/* CHANGE 7: Replaced inline Cancel button with trigger to confirmation dialog */}
                         {coupon.status === 'ACTIVE' && (
                           <button
                             onClick={() => setCancelConfirmId(coupon.id)}

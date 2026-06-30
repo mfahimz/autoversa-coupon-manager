@@ -18,6 +18,9 @@ interface Offer {
   b_valid_days: number | null
   b_redemption_end_date: string | null
   m_redemption_end_date: string | null
+  issuance_window_type: string | null
+  issuance_start_date: string | null
+  issuance_end_date: string | null
   loyalty_brand: string | null
   referral_brand: string | null
   loyalty_code: string | null
@@ -157,7 +160,7 @@ export default function CreateCouponPage() {
 
     const [{ data: profileData }, { data: offersData }, { data: emiratesData }] = await Promise.all([
       supabase.from('profiles').select('user_role, is_active, full_name, advisor_code, id').eq('id', user.id).single(),
-      supabase.from('offers').select('id, title, offer_identifier, valid_days, b_valid_days, b_redemption_end_date, m_redemption_end_date, loyalty_brand, referral_brand, loyalty_code, referral_code, loyalty_campaign_code, referral_campaign_code').eq('is_active', true).order('title'),
+      supabase.from('offers').select('id, title, offer_identifier, valid_days, b_valid_days, b_redemption_end_date, m_redemption_end_date, issuance_window_type, issuance_start_date, issuance_end_date, loyalty_brand, referral_brand, loyalty_code, referral_code, loyalty_campaign_code, referral_campaign_code').eq('is_active', true).order('title'),
       supabase.from('emirates_config').select('id, name, code, categories').eq('is_enabled', true).order('sort_order'),
     ])
 
@@ -244,6 +247,23 @@ export default function CreateCouponPage() {
   async function handleSubmit() {
     if (!validate()) return
     if (!selectedOffer || !profile) return
+
+    // Issuance window check — ADMIN always bypasses
+    if (profile.user_role !== 'ADMIN') {
+      if (selectedOffer.issuance_window_type === 'date_range') {
+        const todayStr = new Date().toISOString().split('T')[0]
+        if (selectedOffer.issuance_start_date && todayStr < selectedOffer.issuance_start_date) {
+          showToast('This offer has not started yet. Issuance window opens on ' + formatDate(selectedOffer.issuance_start_date) + '.', 'error')
+          return
+        }
+        if (selectedOffer.issuance_end_date && todayStr > selectedOffer.issuance_end_date) {
+          showToast('This offer has ended. The issuance window closed on ' + formatDate(selectedOffer.issuance_end_date) + '.', 'error')
+          return
+        }
+      }
+      // issuance_window_type = 'days' has no fixed end date — no check applied
+    }
+
     setSubmitting(true)
 
     const emirateCode = selectedEmirate?.code || form.emirate
@@ -671,11 +691,11 @@ function CouponPreview({ coupon, template }: { coupon: any; template: TemplateDa
     ? template.image_width / template.image_height
     : 1.586
 
-  const containerMaxWidth = 560
-  const naturalWidth = template.image_width || containerMaxWidth
-  const naturalHeight = template.image_height || Math.round(containerMaxWidth / aspectRatio)
-  const scale = containerMaxWidth / naturalWidth
-  const previewWidth = containerMaxWidth
+  const containerWidth = 560
+  const naturalWidth = template.image_width || containerWidth
+  const naturalHeight = template.image_height || Math.round(containerWidth / aspectRatio)
+  const scale = containerWidth / naturalWidth
+  const previewWidth = containerWidth
   const previewHeight = Math.round(naturalHeight * scale)
 
   return (
@@ -739,6 +759,7 @@ function SuccessScreen({ coupons, offer, sequenceNumber, onCreateAnother }: {
   const [templates, setTemplates] = useState<Record<string, TemplateData>>({})
   const [templatesLoaded, setTemplatesLoaded] = useState(false)
   const [actionedIds, setActionedIds] = useState<Set<string>>(new Set())
+  const [waActionedIds, setWaActionedIds] = useState<Set<string>>(new Set())
   const [showSuccessDialog, setShowSuccessDialog] = useState(false)
 
   const mCoupon = coupons.find(c => c.coupon_type === 'LOYALTY')
@@ -751,10 +772,10 @@ function SuccessScreen({ coupons, offer, sequenceNumber, onCreateAnother }: {
 
   // Auto-show success dialog once both coupons are actioned
   useEffect(() => {
-    if (coupons.length === 2 && coupons.every(c => actionedIds.has(c.id))) {
+    if (coupons.length === 2 && coupons.every(c => waActionedIds.has(c.id))) {
       setShowSuccessDialog(true)
     }
-  }, [actionedIds, coupons])
+  }, [waActionedIds, coupons])
 
   async function loadTemplates(offerId: string) {
     const { data } = await supabase
@@ -823,8 +844,11 @@ function SuccessScreen({ coupons, offer, sequenceNumber, onCreateAnother }: {
     )
     // WhatsApp Web direct link — always use web.whatsapp.com/send?phone=...&text=... format for browser-based usage
     // Never use wa.me links — they trigger WhatsApp's redirect page before opening
-    window.open(`https://web.whatsapp.com/send?phone=971${coupon.mobile_number}&text=${message}`, '_blank')
+    // Use named tab 'whatsapp_tab' to reuse existing WhatsApp Web tab if open
+    // Rollback: change 'whatsapp_tab' back to '_blank' if browser behaviour is inconsistent
+    window.open(`https://web.whatsapp.com/send?phone=971${coupon.mobile_number}&text=${message}`, 'whatsapp_tab')
     markActioned(coupon.id)
+    setWaActionedIds(prev => new Set(prev).add(coupon.id))
   }
 
   function renderCouponCard(coupon: any, accentColor: string, label: string, subtitle: string) {
@@ -934,7 +958,7 @@ function SuccessScreen({ coupons, offer, sequenceNumber, onCreateAnother }: {
         }}>
           <div style={{
             backgroundColor: '#FFFFFF', borderRadius: '20px', padding: '36px',
-            maxWidth: '360px', width: '90%', textAlign: 'center',
+            width: '90%', textAlign: 'center',
             boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
           }}>
             <div style={{ fontSize: '52px', marginBottom: '12px' }}>🎉</div>

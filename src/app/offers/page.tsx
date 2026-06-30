@@ -1,10 +1,13 @@
 'use client'
 
+export const dynamic = 'force-dynamic'
+
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/layout/Navbar'
 import Breadcrumb from '@/components/layout/Breadcrumb'
+import PageSkeleton from '@/components/layout/PageSkeleton'
 import { loadPermissionsForRole, checkPermission } from '@/lib/permissions'
 
 
@@ -94,6 +97,8 @@ export default function OffersPage() {
   const totalPages = Math.ceil(offers.length / PAGE_SIZE)
   const paginatedOffers = offers.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
 
+  if (loading) return <PageSkeleton layout="table" />
+
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#F7F7F7', paddingTop: '16px' }}>
       <style>{`
@@ -130,7 +135,7 @@ export default function OffersPage() {
               Offers
             </h1>
             <p style={{ color: '#666666', fontSize: '14px', marginTop: '4px' }}>
-              {loading ? '...' : `${offers.length} offer${offers.length !== 1 ? 's' : ''}`}
+              {offers.length} offer{offers.length !== 1 ? 's' : ''}
             </p>
           </div>
           <button
@@ -166,14 +171,7 @@ export default function OffersPage() {
             ))}
           </div>
 
-          {loading ? (
-            Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} style={{
-                height: '60px', margin: '8px 24px', backgroundColor: '#F0F0F0',
-                borderRadius: '8px', animation: 'pulse 1.5s ease-in-out infinite',
-              }} />
-            ))
-          ) : offers.length === 0 ? (
+          {offers.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '64px 0', color: '#666666', fontSize: '14px' }}>
               No offers yet.{' '}
               <span
@@ -326,5 +324,3 @@ export default function OffersPage() {
     </div>
   )
 }
-
-export const dynamic = 'force-dynamic'

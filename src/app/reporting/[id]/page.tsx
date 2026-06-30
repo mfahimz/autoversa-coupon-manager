@@ -7,6 +7,7 @@ import { useRouter, useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/layout/Navbar'
 import Breadcrumb from '@/components/layout/Breadcrumb'
+import PageSkeleton from '@/components/layout/PageSkeleton'
 import { loadPermissionsForRole, checkPermission } from '@/lib/permissions'
 
 import {
@@ -311,23 +312,7 @@ export default function OfferReportPage() {
     const leaderboardTotalPages = Math.ceil(advisorStats.length / LEADERBOARD_PAGE_SIZE)
     const paginatedLeaderboard = advisorStats.slice((leaderboardPage - 1) * LEADERBOARD_PAGE_SIZE, leaderboardPage * LEADERBOARD_PAGE_SIZE)
 
-    // ── Render ─────────────────────────────────────────────────────────────────
-
-    if (loading) {
-        return (
-            <div style={{ minHeight: '100vh', backgroundColor: '#F7F7F7', paddingTop: '16px' }}>
-                <Navbar />
-                <main style={{ padding: '0 32px 48px' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '32px' }}>
-                        {Array.from({ length: 5 }).map((_, i) => (
-                            <div key={i} style={{ height: '80px', backgroundColor: '#E0E0E0', borderRadius: '16px', animation: 'pulse 1.5s ease-in-out infinite' }} />
-                        ))}
-                    </div>
-                </main>
-                <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }`}</style>
-            </div>
-        )
-    }
+    if (loading) return <PageSkeleton layout="stats-charts" />
 
     if (!offer) {
         return (
@@ -362,7 +347,6 @@ export default function OfferReportPage() {
 
     return (
         <div style={{ minHeight: '100vh', backgroundColor: '#F7F7F7', paddingTop: '16px' }}>
-            <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }`}</style>
             <Navbar />
             <main style={{ padding: '0 32px 48px' }}>
                 <Breadcrumb items={[

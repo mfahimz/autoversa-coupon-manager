@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/layout/Navbar'
 import Breadcrumb from '@/components/layout/Breadcrumb'
+import PageSkeleton from '@/components/layout/PageSkeleton'
 import { loadPermissionsForRole, checkPermission, PermissionsMap } from '@/lib/permissions'
 import { maskMobileNumber } from '@/lib/utils'
 
@@ -220,6 +221,8 @@ export default function CustomersPage() {
     const totalPages = Math.ceil(displayed.length / PAGE_SIZE)
     const paginatedCustomers = displayed.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
 
+    if (loading) return <PageSkeleton layout="table" />
+
     return (
         <div style={{ minHeight: '100vh', backgroundColor: '#F7F7F7', paddingTop: '16px' }}>
             <style>{`
@@ -264,10 +267,7 @@ export default function CustomersPage() {
                     ].map(s => (
                         <div key={s.label} style={{ backgroundColor: '#FFFFFF', borderRadius: '14px', padding: '18px 20px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', borderLeft: `4px solid ${s.color}` }}>
                             <p style={{ fontSize: '12px', color: '#666', fontWeight: '500', margin: '0 0 6px' }}>{s.label}</p>
-                            {loading
-                                ? <div style={{ height: '28px', width: '48px', backgroundColor: '#F0F0F0', borderRadius: '6px', animation: 'pulse 1.5s ease-in-out infinite' }} />
-                                : <p style={{ fontSize: '28px', fontWeight: '700', color: '#1A1A1A', margin: 0, lineHeight: 1 }}>{s.value}</p>
-                            }
+                            <p style={{ fontSize: '28px', fontWeight: '700', color: '#1A1A1A', margin: 0, lineHeight: 1 }}>{s.value}</p>
                         </div>
                     ))}
                 </div>
@@ -306,11 +306,7 @@ export default function CustomersPage() {
 
                 {/* Table */}
                 <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', overflow: 'hidden' }}>
-                    {loading ? (
-                        <div style={{ padding: '48px', display: 'flex', justifyContent: 'center' }}>
-                            <div style={{ width: '32px', height: '32px', borderRadius: '50%', border: '3px solid #0074BD', borderTopColor: 'transparent', animation: 'spin 0.7s linear infinite' }} />
-                        </div>
-                    ) : displayed.length === 0 ? (
+                    {displayed.length === 0 ? (
                         <div style={{ padding: '64px', textAlign: 'center', color: '#666', fontSize: '14px' }}>
                             {(activeTab === 'loyalty' ? loyaltyCustomers : referralCustomers).length === 0
                                 ? 'No customers yet — they are created automatically when coupons are issued or appointments are booked.'
