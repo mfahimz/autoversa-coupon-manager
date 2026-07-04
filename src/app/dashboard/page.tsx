@@ -190,6 +190,7 @@ export default function DashboardPage() {
   // Advisor self-view state
   const [advisorTotalVisits, setAdvisorTotalVisits] = useState(0)
   const [advisorTotalCommission, setAdvisorTotalCommission] = useState(0)
+  const [advisorRankData, setAdvisorRankData] = useState<{ rank: number; total: number; count: number } | null>(null)
   const [advisorOfferGroups, setAdvisorOfferGroups] = useState<OfferGroup[]>([])
   const [advisorStagesByOffer, setAdvisorStagesByOffer] = useState<Record<string, any[]>>({})
   const [advisorBrandsByOffer, setAdvisorBrandsByOffer] = useState<Record<string, { loyalty_brand: string | null; referral_brand: string | null }>>({})
@@ -205,6 +206,9 @@ export default function DashboardPage() {
   const [adminPipelineLoading, setAdminPipelineLoading] = useState(true)
   const [adminPipelineStats, setAdminPipelineStats] = useState({ totalIssued: 0, issuedThisMonth: 0, totalVisits: 0, totalCommission: 0 })
   const [adminPipelineSearch, setAdminPipelineSearch] = useState('')
+  const [adminIssuanceLeaderboard, setAdminIssuanceLeaderboard] = useState<{ name: string; code: string | null; count: number }[]>([])
+  const [sharedLeaderboard, setSharedLeaderboard] = useState<{ name: string; code: string | null; count: number }[]>([])
+  const [sharedLeaderboardLoading, setSharedLeaderboardLoading] = useState(false)
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
 
@@ -254,6 +258,11 @@ export default function DashboardPage() {
       const { data: advisors } = advisorsResult
       setAdvisorList(advisors || [])
       loadAdminPipeline('all')
+    }
+
+    const isManagerOrAGM = role === 'MANAGER' || role === 'ASSISTANT_GENERAL_MANAGER'
+    if (isManagerOrAGM) {
+      loadSharedLeaderboard()
     }
 
     if (isAdvisor) loadAdvisorSelfData(user.id)
@@ -407,6 +416,24 @@ export default function DashboardPage() {
         setAdvisorTotalVisits(0)
         setAdvisorTotalCommission(0)
         setAdvisorOfferGroups([])
+        // Compute advisor rank among all advisors by loyalty coupon issuance count
+        const { data: allAdvisorCoupons } = await supabase
+          .from('coupons')
+          .select('issued_by')
+          .eq('coupon_type', 'LOYALTY')
+
+        const countMap: Record<string, number> = {}
+        ;(allAdvisorCoupons || []).forEach((c: any) => {
+          if (c.issued_by) countMap[c.issued_by] = (countMap[c.issued_by] || 0) + 1
+        })
+        const sorted = Object.entries(countMap).sort((a, b) => b[1] - a[1])
+        const myIndex = sorted.findIndex(([id]) => id === userId)
+        const myCount = countMap[userId] || 0
+        setAdvisorRankData({
+          rank: myIndex >= 0 ? myIndex + 1 : sorted.length + 1,
+          total: sorted.length,
+          count: myCount,
+        })
         setAdvisorLoading(false)
         return
       }
@@ -450,6 +477,25 @@ export default function DashboardPage() {
 
       setAdvisorTotalVisits((visitedAppts || []).length)
       setAdvisorTotalCommission(totalCommission)
+
+      // Compute advisor rank among all advisors by loyalty coupon issuance count
+      const { data: allAdvisorCoupons } = await supabase
+        .from('coupons')
+        .select('issued_by')
+        .eq('coupon_type', 'LOYALTY')
+
+      const countMap: Record<string, number> = {}
+      ;(allAdvisorCoupons || []).forEach((c: any) => {
+        if (c.issued_by) countMap[c.issued_by] = (countMap[c.issued_by] || 0) + 1
+      })
+      const sorted = Object.entries(countMap).sort((a, b) => b[1] - a[1])
+      const myIndex = sorted.findIndex(([id]) => id === userId)
+      const myCount = countMap[userId] || 0
+      setAdvisorRankData({
+        rank: myIndex >= 0 ? myIndex + 1 : sorted.length + 1,
+        total: sorted.length,
+        count: myCount,
+      })
     } catch (e) {
       console.error('Advisor self data error:', e)
       setAdvisorOfferGroups([])
@@ -479,6 +525,7 @@ export default function DashboardPage() {
       if (!coupons || coupons.length === 0) {
         setAdminPipelineStats({ totalIssued: 0, issuedThisMonth: 0, totalVisits: 0, totalCommission: 0 })
         setAdminPipelineGroups([])
+        setAdminIssuanceLeaderboard([])
         setAdminPipelineLoading(false)
         return
       }
@@ -528,11 +575,50 @@ export default function DashboardPage() {
         totalVisits: (visitedAppts || []).length,
         totalCommission,
       })
+
+      const leaderboardMap: Record<string, { name: string; code: string | null; count: number }> = {}
+      coupons.forEach((c: any) => {
+        const key = c.issued_by || 'unknown'
+        if (!leaderboardMap[key]) leaderboardMap[key] = { name: c.advisor_name || 'Unknown', code: null, count: 0 }
+        leaderboardMap[key].count++
+      })
+      // Attach advisor codes from advisorList
+      const leaderboard = Object.values(leaderboardMap)
+        .filter(e => e.name !== 'Unknown')
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5)
+      setAdminIssuanceLeaderboard(leaderboard)
     } catch (e) {
       console.error('Admin pipeline error:', e)
       setAdminPipelineGroups([])
     } finally {
       setAdminPipelineLoading(false)
+    }
+  }
+
+  async function loadSharedLeaderboard() {
+    setSharedLeaderboardLoading(true)
+    try {
+      const { data: coupons } = await supabase
+        .from('coupons')
+        .select('issued_by, advisor_name')
+        .eq('coupon_type', 'LOYALTY')
+
+      const map: Record<string, { name: string; code: string | null; count: number }> = {}
+      ;(coupons || []).forEach((c: any) => {
+        const key = c.issued_by || 'unknown'
+        if (!map[key]) map[key] = { name: c.advisor_name || 'Unknown', code: null, count: 0 }
+        map[key].count++
+      })
+      const leaderboard = Object.values(map)
+        .filter(e => e.name !== 'Unknown')
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5)
+      setSharedLeaderboard(leaderboard)
+    } catch (e) {
+      console.error('Shared leaderboard error:', e)
+    } finally {
+      setSharedLeaderboardLoading(false)
     }
   }
 
@@ -563,6 +649,7 @@ export default function DashboardPage() {
   const isAdvisor = profile?.user_role === 'SERVICE_ADVISOR' || profile?.user_role === 'BMW_SERVICE_ADVISOR'
   const isAdmin = profile?.user_role === 'ADMIN'
   const isReceptionist = profile?.user_role === 'RECEPTIONIST'
+  const isManagerOrAGM = profile?.user_role === 'MANAGER' || profile?.user_role === 'ASSISTANT_GENERAL_MANAGER'
 
   // ─── Render: Loyalty table for receptionist/admin ─────────────────────────
 
@@ -989,6 +1076,23 @@ export default function DashboardPage() {
             <StatCard label="Commission Earned" value={advisorTotalCommission} color="#f59e0b" loading={advisorLoading} format="currency" />
           </div>
 
+          {advisorRankData && (
+            <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '20px 24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', marginBottom: '28px', display: 'flex', alignItems: 'center', gap: '20px' }}>
+              <div style={{ width: '52px', height: '52px', borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', fontWeight: '800', backgroundColor: advisorRankData.rank === 1 ? '#f59e0b' : advisorRankData.rank === 2 ? '#94a3b8' : advisorRankData.rank === 3 ? '#b45309' : '#EEF2FF', color: advisorRankData.rank <= 3 ? '#FFFFFF' : '#162860' }}>
+                {advisorRankData.rank <= 3 ? ['🥇','🥈','🥉'][advisorRankData.rank - 1] : `#${advisorRankData.rank}`}
+              </div>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontSize: '13px', fontWeight: '700', color: '#1A1A1A', margin: '0 0 2px' }}>
+                  {advisorRankData.rank === 1 ? 'Top issuer on the team!' : `Ranked #${advisorRankData.rank} of ${advisorRankData.total} advisors`}
+                </p>
+                <p style={{ fontSize: '12px', color: '#888', margin: 0 }}>
+                  {advisorRankData.count} loyalty coupon{advisorRankData.count !== 1 ? 's' : ''} issued
+                </p>
+              </div>
+              <div style={{ height: '40px', width: '4px', borderRadius: '2px', backgroundColor: advisorRankData.rank === 1 ? '#f59e0b' : advisorRankData.rank <= 3 ? '#94a3b8' : '#0074BD', flexShrink: 0 }} />
+            </div>
+          )}
+
           {/* Quick actions */}
           <div style={{ display: 'flex', gap: '12px', marginBottom: '36px' }}>
             <button onClick={() => router.push('/create-coupon')} style={{ padding: '12px 24px', backgroundColor: '#0074BD', color: '#FFFFFF', border: 'none', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>
@@ -1057,6 +1161,50 @@ export default function DashboardPage() {
             </div>
           ) : recentCoupons.map(coupon => <RecentCouponRow key={coupon.coupon_code} coupon={coupon} />)}
         </div>
+
+        {isManagerOrAGM && (
+          <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '20px 24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', marginBottom: '40px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+              <span style={{ fontSize: '16px' }}>🏆</span>
+              <h3 style={{ fontSize: '14px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>Top Issuers</h3>
+              <span style={{ fontSize: '12px', color: '#888', marginLeft: 'auto' }}>Loyalty coupons issued</span>
+            </div>
+            {sharedLeaderboardLoading ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <div key={i} style={{ height: '36px', backgroundColor: '#F0F0F0', borderRadius: '8px', animation: 'pulse 1.5s ease-in-out infinite' }} />
+                ))}
+              </div>
+            ) : sharedLeaderboard.length === 0 ? (
+              <p style={{ fontSize: '13px', color: '#888', margin: 0 }}>No coupon data yet.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {sharedLeaderboard.map((entry, i) => {
+                  const medalColors = ['#f59e0b', '#94a3b8', '#b45309']
+                  const isMedal = i < 3
+                  const barWidth = sharedLeaderboard[0].count > 0 ? (entry.count / sharedLeaderboard[0].count) * 100 : 0
+                  const barColor = i === 0 ? '#f59e0b' : i === 1 ? '#94a3b8' : i === 2 ? '#b45309' : '#0074BD'
+                  return (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div style={{ width: '24px', height: '24px', borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '700', backgroundColor: isMedal ? medalColors[i] : '#F0F0F0', color: isMedal ? '#FFFFFF' : '#666' }}>
+                        {i + 1}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                          <span style={{ fontSize: '13px', fontWeight: '600', color: '#1A1A1A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.name}</span>
+                          <span style={{ fontSize: '13px', fontWeight: '700', color: barColor, flexShrink: 0, marginLeft: '8px' }}>{entry.count}</span>
+                        </div>
+                        <div style={{ height: '5px', backgroundColor: '#F0F0F0', borderRadius: '100px', overflow: 'hidden' }}>
+                          <div style={{ height: '100%', borderRadius: '100px', backgroundColor: barColor, width: `${barWidth}%`, transition: 'width 0.5s ease' }} />
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Loyalty Rewards Dashboard */}
         {isAdmin && (
@@ -1143,6 +1291,40 @@ export default function DashboardPage() {
                   ))
                 )}
               </div>
+
+              {adminIssuanceLeaderboard.length > 0 && (
+                <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '20px 24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', marginBottom: '24px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                    <span style={{ fontSize: '16px' }}>🏆</span>
+                    <h3 style={{ fontSize: '14px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>Top Issuers</h3>
+                    <span style={{ fontSize: '12px', color: '#888', marginLeft: 'auto' }}>Loyalty coupons issued</span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {adminIssuanceLeaderboard.map((entry, i) => {
+                      const medalColors = ['#f59e0b', '#94a3b8', '#b45309']
+                      const isMedal = i < 3
+                      const barWidth = adminIssuanceLeaderboard[0].count > 0 ? (entry.count / adminIssuanceLeaderboard[0].count) * 100 : 0
+                      const barColor = i === 0 ? '#f59e0b' : i === 1 ? '#94a3b8' : i === 2 ? '#b45309' : '#0074BD'
+                      return (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <div style={{ width: '24px', height: '24px', borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '700', backgroundColor: isMedal ? medalColors[i] : '#F0F0F0', color: isMedal ? '#FFFFFF' : '#666' }}>
+                            {i + 1}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                              <span style={{ fontSize: '13px', fontWeight: '600', color: '#1A1A1A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.name}</span>
+                              <span style={{ fontSize: '13px', fontWeight: '700', color: barColor, flexShrink: 0, marginLeft: '8px' }}>{entry.count}</span>
+                            </div>
+                            <div style={{ height: '5px', backgroundColor: '#F0F0F0', borderRadius: '100px', overflow: 'hidden' }}>
+                              <div style={{ height: '100%', borderRadius: '100px', backgroundColor: barColor, width: `${barWidth}%`, transition: 'width 0.5s ease' }} />
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
 
               <div style={{ marginBottom: '20px' }}>
                 <input value={adminPipelineSearch} onChange={e => setAdminPipelineSearch(e.target.value)} placeholder="Search by plate, advisor, coupon code…"
