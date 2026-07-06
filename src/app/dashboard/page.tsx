@@ -17,6 +17,7 @@ interface Profile {
   email?: string | null
   user_role: string
   advisor_code: string | null
+  is_active?: boolean | null
 }
 
 interface DashboardStats {
@@ -231,7 +232,7 @@ export default function DashboardPage() {
       statsResult,
       recentResult
     ] = await Promise.all([
-      supabase.from('profiles').select('user_role, full_name, advisor_code').eq('id', user.id).single(),
+      supabase.from('profiles').select('user_role, full_name, advisor_code, is_active').eq('id', user.id).single(),
       supabase
         .from('profiles')
         .select('id, full_name, advisor_code, user_role')
@@ -246,6 +247,12 @@ export default function DashboardPage() {
 
     const { data: profileData } = profileResult
     if (profileData) setProfile(profileData)
+
+    if (profileData?.is_active === false) {
+      await supabase.auth.signOut()
+      router.push('/login')
+      return
+    }
 
     const role = profileData?.user_role
     const isAdvisor = role === 'SERVICE_ADVISOR' || role === 'BMW_SERVICE_ADVISOR'
@@ -1032,7 +1039,7 @@ export default function DashboardPage() {
             ))}
           </div>
           <div style={{ marginBottom: '20px' }}>
-            <input value={rSearch} onChange={e => setRSearch(e.target.value)} placeholder="Search by plate, advisor, mobile, coupon code…"
+            <input value={rSearch} onChange={e => setRSearch(e.target.value.replace(/[<>]/g, '').slice(0, 100))} placeholder="Search by plate, advisor, mobile, coupon code…"
               style={{ width: '100%', padding: '10px 14px', fontSize: '14px', border: '1.5px solid #E0E0E0', borderRadius: '10px', outline: 'none', backgroundColor: '#FFFFFF', color: '#1A1A1A', boxSizing: 'border-box' }} />
           </div>
           {rLoading ? (
@@ -1127,7 +1134,7 @@ export default function DashboardPage() {
           </div>
 
           <div style={{ marginBottom: '20px' }}>
-            <input value={advisorSearch} onChange={e => setAdvisorSearch(e.target.value)} placeholder="Search by plate or coupon code…"
+            <input value={advisorSearch} onChange={e => setAdvisorSearch(e.target.value.replace(/[<>]/g, '').slice(0, 100))} placeholder="Search by plate or coupon code…"
               style={{ width: '100%', padding: '10px 14px', fontSize: '14px', border: '1.5px solid #E0E0E0', borderRadius: '10px', outline: 'none', backgroundColor: '#FFFFFF', color: '#1A1A1A', boxSizing: 'border-box' }} />
           </div>
 
@@ -1251,7 +1258,7 @@ export default function DashboardPage() {
               ))}
             </div>
             <div style={{ marginBottom: '20px' }}>
-              <input value={rSearch} onChange={e => setRSearch(e.target.value)} placeholder="Search by plate, advisor, mobile, coupon code…"
+              <input value={rSearch} onChange={e => setRSearch(e.target.value.replace(/[<>]/g, '').slice(0, 100))} placeholder="Search by plate, advisor, mobile, coupon code…"
                 style={{ width: '100%', padding: '10px 14px', fontSize: '14px', border: '1.5px solid #E0E0E0', borderRadius: '10px', outline: 'none', backgroundColor: '#FFFFFF', color: '#1A1A1A', boxSizing: 'border-box' }} />
             </div>
             {rLoading ? (
@@ -1344,7 +1351,7 @@ export default function DashboardPage() {
               )}
 
               <div style={{ marginBottom: '20px' }}>
-                <input value={adminPipelineSearch} onChange={e => setAdminPipelineSearch(e.target.value)} placeholder="Search by plate, advisor, coupon code…"
+                <input value={adminPipelineSearch} onChange={e => setAdminPipelineSearch(e.target.value.replace(/[<>]/g, '').slice(0, 100))} placeholder="Search by plate, advisor, coupon code…"
                   style={{ width: '100%', padding: '10px 14px', fontSize: '14px', border: '1.5px solid #E0E0E0', borderRadius: '10px', outline: 'none', backgroundColor: '#FFFFFF', color: '#1A1A1A', boxSizing: 'border-box' }} />
               </div>
 

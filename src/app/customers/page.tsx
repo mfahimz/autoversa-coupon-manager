@@ -186,7 +186,7 @@ export default function CustomersPage() {
             .eq('id', selectedCustomer.id)
 
         if (error) {
-            showToast('Failed to save — ' + error.message, 'error')
+            showToast('Failed to save changes. Please try again.', 'error')
             setSaving(false)
             return
         }
@@ -409,7 +409,7 @@ export default function CustomersPage() {
             {/* ── EDIT PANEL ── */}
             {selectedCustomer && canEdit && (
                 <div style={{ position: 'fixed', inset: 0, zIndex: 1000, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
-                    <div style={{ backgroundColor: '#FFFFFF', borderRadius: '20px', padding: '32px', width: '100%', maxWidth: '480px', boxShadow: '0 8px 40px rgba(0,0,0,0.15)', maxHeight: '90vh', overflowY: 'auto' }}>
+                    <div style={{ backgroundColor: '#FFFFFF', borderRadius: '20px', padding: '32px', width: '100%', boxShadow: '0 8px 40px rgba(0,0,0,0.15)', maxHeight: '90vh', overflowY: 'auto' }}>
 
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                             <div>
