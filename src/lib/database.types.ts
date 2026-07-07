@@ -50,6 +50,96 @@ export type Database = {
         }
         Relationships: []
       }
+      advisor_daily_invoices: {
+        Row: {
+          advisor_code: string
+          created_at: string | null
+          entered_by: string | null
+          id: string
+          invoice_count: number
+          invoice_date: string
+          profile_id: string | null
+        }
+        Insert: {
+          advisor_code: string
+          created_at?: string | null
+          entered_by?: string | null
+          id?: string
+          invoice_count?: number
+          invoice_date: string
+          profile_id?: string | null
+        }
+        Update: {
+          advisor_code?: string
+          created_at?: string | null
+          entered_by?: string | null
+          id?: string
+          invoice_count?: number
+          invoice_date?: string
+          profile_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "advisor_daily_invoices_entered_by_fkey"
+            columns: ["entered_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "advisor_daily_invoices_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      advisor_monthly_baseline: {
+        Row: {
+          advisor_code: string
+          baseline_count: number
+          id: string
+          month: string
+          profile_id: string | null
+          set_at: string | null
+          set_by: string | null
+        }
+        Insert: {
+          advisor_code: string
+          baseline_count?: number
+          id?: string
+          month: string
+          profile_id?: string | null
+          set_at?: string | null
+          set_by?: string | null
+        }
+        Update: {
+          advisor_code?: string
+          baseline_count?: number
+          id?: string
+          month?: string
+          profile_id?: string | null
+          set_at?: string | null
+          set_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "advisor_monthly_baseline_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "advisor_monthly_baseline_set_by_fkey"
+            columns: ["set_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       appointments: {
         Row: {
           appointment_date: string | null
@@ -892,6 +982,35 @@ export type Database = {
     }
     Functions: {
       advance_m_coupon_stage: { Args: { p_b_coupon_id: string }; Returns: Json }
+      get_advisor_leaderboard: {
+        Args: never
+        Returns: {
+          advisor_code: string
+          advisor_name: string
+          coupons_this_month: number
+          invoices_this_month: number
+          score: number
+        }[]
+      }
+      get_dashboard_stats: {
+        Args: never
+        Returns: {
+          redeemed_coupons: number
+          referral_visits: number
+          today_coupons: number
+          total_advisors: number
+          total_coupon_rows: number
+          total_coupons: number
+        }[]
+      }
+      get_offer_stage_counts: {
+        Args: never
+        Returns: {
+          count: number
+          offer_id: string
+          stage_number: number
+        }[]
+      }
       get_offer_summaries: {
         Args: never
         Returns: {
@@ -899,9 +1018,6 @@ export type Database = {
           loyalty_issued: number
           offer_id: string
           referral_issued: number
-          stage1_count: number
-          stage2_count: number
-          stage3_count: number
           total_issued: number
         }[]
       }

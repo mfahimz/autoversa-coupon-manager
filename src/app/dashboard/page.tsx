@@ -8,6 +8,8 @@ import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/layout/Navbar'
 import PageSkeleton from '@/components/layout/PageSkeleton'
 import { maskMobileNumber } from '@/lib/utils'
+import InvoiceEntryDialog from '@/components/dashboard/InvoiceEntryDialog'
+import { getLeaderboard, getAllAdvisorsMissingStatus, type LeaderboardRow } from '@/lib/invoiceTracking'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -22,11 +24,11 @@ interface Profile {
 
 interface DashboardStats {
   totalCoupons: number
-  activeCoupons: number
+  totalCouponRows: number
   redeemedCoupons: number
-  expiredCoupons: number
   todaysCoupons: number
   totalAdvisors: number
+  referralVisits: number
 }
 
 interface LoyaltyCouponRow {
@@ -79,6 +81,21 @@ function getGreeting() {
 
 const PAGE_SIZE = 10
 
+// Helper to convert hex colors to rgb values
+function hexToRgbStr(hex: string): string {
+  let cleaned = hex.replace('#', '')
+  if (cleaned.length === 3) {
+    cleaned = cleaned.split('').map(c => c + c).join('')
+  }
+  const r = parseInt(cleaned.substring(0, 2), 16)
+  const g = parseInt(cleaned.substring(2, 4), 16)
+  const b = parseInt(cleaned.substring(4, 6), 16)
+  if (isNaN(r) || isNaN(g) || isNaN(b)) {
+    return '0, 116, 189' // Default fallback
+  }
+  return `${r}, ${g}, ${b}`
+}
+
 // ─── Pagination component ─────────────────────────────────────────────────────
 
 function Pagination({ total, page, onPage }: { total: number; page: number; onPage: (p: number) => void }) {
@@ -118,27 +135,75 @@ function Pagination({ total, page, onPage }: { total: number; page: number; onPa
   )
 }
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+// ─── Stat card ─────────────────────────────────────────────────────────────
 
-function StatCard({ label, value, color, loading, format = 'number', subtitle }: {
-  label: string; value: number; color: string; loading: boolean; format?: 'number' | 'currency'; subtitle?: string
+function StatCard({ label, value, color, loading, format = 'number', subtitle, icon }: {
+  label: string; value: number; color: string; loading: boolean; format?: 'number' | 'currency'; subtitle?: string; icon?: string
 }) {
+  const rgb = hexToRgbStr(color)
   return (
     <div style={{
-      backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '24px',
-      boxShadow: '0 1px 4px rgba(0,0,0,0.06)', borderLeft: `4px solid ${color}`,
-      display: 'flex', flexDirection: 'column', gap: '8px',
+      background: 'linear-gradient(180deg, #FFFFFF 0%, #FCFCFC 100%)',
+      borderRadius: '16px',
+      padding: '20px 22px',
+      boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+      border: '1px solid #F0F0F0',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '6px',
+      position: 'relative',
+      overflow: 'hidden',
     }}>
-      <p style={{ fontSize: '13px', color: '#666666', fontWeight: '500', margin: 0 }}>{label}</p>
-      {loading
-        ? <div style={{ height: '36px', width: '80px', backgroundColor: '#F0F0F0', borderRadius: '8px', animation: 'pulse 1.5s ease-in-out infinite' }} />
-        : <p style={{ fontSize: '32px', fontWeight: '700', color: '#1A1A1A', margin: 0, lineHeight: 1 }}>
+      {/* Top Edge Gradient Border Glow */}
+      <div style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        height: '3px',
+        background: `linear-gradient(90deg, rgba(${rgb}, 0.2), ${color}, rgba(${rgb}, 0.2))`,
+        boxShadow: `0 1px 6px rgba(${rgb}, 0.5)`,
+      }} />
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '3px' }}>
+        {icon && (
+          <div style={{ width: '28px', height: '28px', borderRadius: '8px', backgroundColor: `${color}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px' }}>
+            {icon}
+          </div>
+        )}
+        <p style={{ fontSize: '12px', color: '#666666', fontWeight: '600', margin: 0 }}>{label}</p>
+      </div>
+
+      {loading ? (
+        <div style={{ height: '30px', width: '70px', backgroundColor: '#F0F0F0', borderRadius: '8px', animation: 'pulse 1.5s ease-in-out infinite' }} />
+      ) : (
+        <p style={{
+          fontSize: '26px',
+          fontWeight: '700',
+          color: '#1A1A1A',
+          margin: 0,
+          lineHeight: 1,
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+          fontVariantNumeric: 'tabular-nums',
+          letterSpacing: '0.025em'
+        }}>
           {format === 'currency' ? `AED ${value.toLocaleString()}` : value.toLocaleString()}
         </p>
-      }
-      {subtitle && (
-        <p style={{ fontSize: '11px', color: '#999999', margin: 0 }}>{subtitle}</p>
       )}
+
+      {subtitle && <p style={{ fontSize: '11px', color: '#999999', margin: 0 }}>{subtitle}</p>}
+
+      {/* Bottom Progress Bar with gradient fill and subtle glow */}
+      <div style={{
+        position: 'absolute',
+        bottom: 0,
+        left: '22px',
+        right: '22px',
+        height: '3px',
+        borderRadius: '3px 3px 0 0',
+        background: `linear-gradient(90deg, rgba(${rgb}, 0.4), ${color})`,
+        boxShadow: `0 1px 8px rgba(${rgb}, 0.5)`,
+      }} />
     </div>
   )
 }
@@ -174,7 +239,7 @@ export default function DashboardPage() {
   const supabase = createClient()
 
   const [profile, setProfile] = useState<Profile | null>(null)
-  const [stats, setStats] = useState<DashboardStats>({ totalCoupons: 0, activeCoupons: 0, redeemedCoupons: 0, expiredCoupons: 0, todaysCoupons: 0, totalAdvisors: 0 })
+  const [stats, setStats] = useState<DashboardStats>({ totalCoupons: 0, totalCouponRows: 0, redeemedCoupons: 0, todaysCoupons: 0, totalAdvisors: 0, referralVisits: 0 })
   const [recentCoupons, setRecentCoupons] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -194,7 +259,6 @@ export default function DashboardPage() {
   // Advisor self-view state
   const [advisorTotalVisits, setAdvisorTotalVisits] = useState(0)
   const [advisorTotalCommission, setAdvisorTotalCommission] = useState(0)
-  const [advisorLeaderboard, setAdvisorLeaderboard] = useState<{ name: string; count: number; isMe: boolean }[]>([])
   const [advisorOfferGroups, setAdvisorOfferGroups] = useState<OfferGroup[]>([])
   const [advisorStagesByOffer, setAdvisorStagesByOffer] = useState<Record<string, any[]>>({})
   const [advisorBrandsByOffer, setAdvisorBrandsByOffer] = useState<Record<string, { loyalty_brand: string | null; referral_brand: string | null }>>({})
@@ -210,13 +274,33 @@ export default function DashboardPage() {
   const [adminPipelineLoading, setAdminPipelineLoading] = useState(true)
   const [adminPipelineStats, setAdminPipelineStats] = useState({ totalIssued: 0, issuedThisMonth: 0, totalVisits: 0, totalCommission: 0 })
   const [adminPipelineSearch, setAdminPipelineSearch] = useState('')
-  const [adminIssuanceLeaderboard, setAdminIssuanceLeaderboard] = useState<{ name: string; code: string | null; count: number }[]>([])
-  const [sharedLeaderboard, setSharedLeaderboard] = useState<{ name: string; code: string | null; count: number }[]>([])
-  const [sharedLeaderboardLoading, setSharedLeaderboardLoading] = useState(false)
+
+  // Dialog State
+  const [isInvoiceDialogOpen, setIsInvoiceDialogOpen] = useState(false)
+  const [hasAutoOpened, setHasAutoOpened] = useState(false)
+
+  // Leaderboard State
+  const [leaderboardData, setLeaderboardData] = useState<LeaderboardRow[]>([])
+  const [leaderboardLoading, setLeaderboardLoading] = useState(true)
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
 
   useEffect(() => { loadDashboard() }, [])
+
+  // Auto-open logic for Admin / Manager once profile is loaded
+  useEffect(() => {
+    if (profile && (profile.user_role === 'ADMIN' || profile.user_role === 'MANAGER') && !hasAutoOpened) {
+      setHasAutoOpened(true)
+      getAllAdvisorsMissingStatus().then(statuses => {
+        const needsAction = statuses.some(s => s.needsBaseline || s.missingDays.length > 0)
+        if (needsAction) {
+          setIsInvoiceDialogOpen(true)
+        }
+      }).catch(err => {
+        console.error('Error fetching advisor status for auto-open:', err)
+      })
+    }
+  }, [profile, hasAutoOpened])
 
   function showToast(message: string, type: 'success' | 'error' = 'success') {
     setToast({ message, type })
@@ -227,15 +311,13 @@ export default function DashboardPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
 
-    const today = new Date().toISOString().split('T')[0]
-
     const [
       profileResult,
       advisorsResult,
       statsResult,
       recentResult
     ] = await Promise.all([
-      supabase.from('profiles').select('user_role, full_name, advisor_code, is_active').eq('id', user.id).single(),
+      supabase.from('profiles').select('id, user_role, full_name, advisor_code, is_active').eq('id', user.id).single(),
       supabase
         .from('profiles')
         .select('id, full_name, advisor_code, user_role')
@@ -270,22 +352,46 @@ export default function DashboardPage() {
       loadAdminPipeline('all')
     }
 
-    const isManagerOrAGM = role === 'MANAGER' || role === 'ASSISTANT_GENERAL_MANAGER'
-    if (isManagerOrAGM) {
-      loadSharedLeaderboard()
-    }
-
     if (isAdvisor) loadAdvisorSelfData(user.id)
+
+    // Load Advisor Leaderboard for everyone except Receptionist
+    if (!isReceptionist) {
+      setLeaderboardLoading(true)
+      getLeaderboard()
+        .then(data => {
+          if (Array.isArray(data)) {
+            // Verify data, sort client-side by score DESC as a safeguard
+            const verified = data.map(item => ({
+              advisor_name: item?.advisor_name || (item as any)?.full_name || 'Unknown',
+              invoices_count: typeof item?.invoices_count === 'number' ? item.invoices_count : ((item as any)?.invoices_this_month ?? 0),
+              coupons_count: typeof item?.coupons_count === 'number' ? item.coupons_count : ((item as any)?.coupons_this_month ?? 0),
+              score: typeof item?.score === 'number' ? item.score : 0,
+            }))
+            const sorted = verified.sort((a, b) => b.score - a.score)
+            setLeaderboardData(sorted)
+          } else {
+            console.error('getLeaderboard returned invalid format:', data)
+            setLeaderboardData([])
+          }
+        })
+        .catch(err => {
+          console.error('Error fetching leaderboard:', err)
+          setLeaderboardData([])
+        })
+        .finally(() => {
+          setLeaderboardLoading(false)
+        })
+    }
 
     if (!isReceptionist && !isAdvisor) {
       const statsRow = statsResult.data?.[0]
       setStats({
         totalCoupons: statsRow?.total_coupons || 0,
-        activeCoupons: statsRow?.active_coupons || 0,
+        totalCouponRows: statsRow?.total_coupon_rows || 0,
         redeemedCoupons: statsRow?.redeemed_coupons || 0,
-        expiredCoupons: statsRow?.expired_coupons || 0,
         todaysCoupons: statsRow?.today_coupons || 0,
         totalAdvisors: statsRow?.total_advisors || 0,
+        referralVisits: statsRow?.referral_visits || 0,
       })
       const { data: recent } = recentResult
       setRecentCoupons(recent || [])
@@ -333,22 +439,22 @@ export default function DashboardPage() {
 
     const visitedCouponIds = new Set((visitedAppts || []).map((a: any) => a.coupon_id))
     const visitedCountByLoyalty: Record<string, number> = {}
-    ; (allReferralCoupons || []).forEach((b: any) => {
+    ;(allReferralCoupons || []).forEach((b: any) => {
       if (visitedCouponIds.has(b.id))
         visitedCountByLoyalty[b.parent_coupon_id] = (visitedCountByLoyalty[b.parent_coupon_id] || 0) + 1
     })
 
     const brandsMap: Record<string, { loyalty_brand: string | null; referral_brand: string | null }> = {}
-    ; (offersData || []).forEach((o: any) => { brandsMap[o.id] = { loyalty_brand: o.loyalty_brand, referral_brand: o.referral_brand } })
+    ;(offersData || []).forEach((o: any) => { brandsMap[o.id] = { loyalty_brand: o.loyalty_brand, referral_brand: o.referral_brand } })
 
     const stagesByOfferMap: Record<string, any[]> = {}
-    ; (stagesData || []).forEach((s: any) => {
+    ;(stagesData || []).forEach((s: any) => {
       if (!stagesByOfferMap[s.offer_id]) stagesByOfferMap[s.offer_id] = []
       stagesByOfferMap[s.offer_id].push(s)
     })
 
     const waByOfferAndStage: Record<string, string> = {}
-    ; (waTemplates || []).forEach((t: any) => { waByOfferAndStage[`${t.offer_id}_${t.trigger_type}`] = t.message_body })
+    ;(waTemplates || []).forEach((t: any) => { waByOfferAndStage[`${t.offer_id}_${t.trigger_type}`] = t.message_body })
 
     const rows: LoyaltyCouponRow[] = coupons.map((c: any) => {
       const stages = stagesByOfferMap[c.offer_id] || []
@@ -412,9 +518,6 @@ export default function DashboardPage() {
   async function loadAdvisorSelfData(userId: string) {
     setAdvisorLoading(true)
     try {
-      const now = new Date()
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
-
       const { data: coupons } = await supabase
         .from('coupons')
         .select('id, coupon_code, plate_combined_string, mobile_number, advisor_name, issued_by, stage, stage_updated_at, offer_id, offer_title, last_notified_at')
@@ -426,23 +529,6 @@ export default function DashboardPage() {
         setAdvisorTotalVisits(0)
         setAdvisorTotalCommission(0)
         setAdvisorOfferGroups([])
-        // Build full leaderboard of all advisors by loyalty coupon issuance count
-        const { data: allAdvisorCoupons } = await supabase
-          .from('coupons')
-          .select('issued_by, advisor_name')
-          .eq('coupon_type', 'LOYALTY')
-
-        const countMap: Record<string, { name: string; count: number }> = {}
-        ;(allAdvisorCoupons || []).forEach((c: any) => {
-          const key = c.issued_by || 'unknown'
-          if (!countMap[key]) countMap[key] = { name: c.advisor_name || 'Unknown', count: 0 }
-          countMap[key].count++
-        })
-        const leaderboard = Object.entries(countMap)
-          .filter(([, v]) => v.name !== 'Unknown')
-          .sort((a, b) => b[1].count - a[1].count)
-          .map(([id, v]) => ({ name: v.name, count: v.count, isMe: id === userId }))
-        setAdvisorLeaderboard(leaderboard)
         setAdvisorLoading(false)
         return
       }
@@ -474,10 +560,10 @@ export default function DashboardPage() {
         : { data: [] }
 
       const commissionByOffer: Record<string, number> = {}
-      ; (offersData || []).forEach((o: any) => { commissionByOffer[o.id] = o.commission_amount || 0 })
+      ;(offersData || []).forEach((o: any) => { commissionByOffer[o.id] = o.commission_amount || 0 })
 
       const visitsPerOffer: Record<string, number> = {}
-      ; (visitedAppts || []).forEach((a: any) => {
+      ;(visitedAppts || []).forEach((a: any) => {
         if (a.offer_id) visitsPerOffer[a.offer_id] = (visitsPerOffer[a.offer_id] || 0) + 1
       })
 
@@ -487,23 +573,6 @@ export default function DashboardPage() {
       setAdvisorTotalVisits((visitedAppts || []).length)
       setAdvisorTotalCommission(totalCommission)
 
-      // Build full leaderboard of all advisors by loyalty coupon issuance count
-      const { data: allAdvisorCoupons } = await supabase
-        .from('coupons')
-        .select('issued_by, advisor_name')
-        .eq('coupon_type', 'LOYALTY')
-
-      const countMap: Record<string, { name: string; count: number }> = {}
-      ;(allAdvisorCoupons || []).forEach((c: any) => {
-        const key = c.issued_by || 'unknown'
-        if (!countMap[key]) countMap[key] = { name: c.advisor_name || 'Unknown', count: 0 }
-        countMap[key].count++
-      })
-      const leaderboard = Object.entries(countMap)
-        .filter(([, v]) => v.name !== 'Unknown')
-        .sort((a, b) => b[1].count - a[1].count)
-        .map(([id, v]) => ({ name: v.name, count: v.count, isMe: id === userId }))
-      setAdvisorLeaderboard(leaderboard)
     } catch (e) {
       console.error('Advisor self data error:', e)
       setAdvisorOfferGroups([])
@@ -533,7 +602,6 @@ export default function DashboardPage() {
       if (!coupons || coupons.length === 0) {
         setAdminPipelineStats({ totalIssued: 0, issuedThisMonth: 0, totalVisits: 0, totalCommission: 0 })
         setAdminPipelineGroups([])
-        setAdminIssuanceLeaderboard([])
         setAdminPipelineLoading(false)
         return
       }
@@ -565,10 +633,10 @@ export default function DashboardPage() {
         : { data: [] }
 
       const commissionByOffer: Record<string, number> = {}
-      ; (offersData || []).forEach((o: any) => { commissionByOffer[o.id] = o.commission_amount || 0 })
+      ;(offersData || []).forEach((o: any) => { commissionByOffer[o.id] = o.commission_amount || 0 })
 
       const visitsPerOffer: Record<string, number> = {}
-      ; (visitedAppts || []).forEach((a: any) => {
+      ;(visitedAppts || []).forEach((a: any) => {
         if (a.offer_id) visitsPerOffer[a.offer_id] = (visitsPerOffer[a.offer_id] || 0) + 1
       })
 
@@ -584,49 +652,11 @@ export default function DashboardPage() {
         totalCommission,
       })
 
-      const leaderboardMap: Record<string, { name: string; code: string | null; count: number }> = {}
-      coupons.forEach((c: any) => {
-        const key = c.issued_by || 'unknown'
-        if (!leaderboardMap[key]) leaderboardMap[key] = { name: c.advisor_name || 'Unknown', code: null, count: 0 }
-        leaderboardMap[key].count++
-      })
-      // Attach advisor codes from advisorList
-      const leaderboard = Object.values(leaderboardMap)
-        .filter(e => e.name !== 'Unknown')
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 5)
-      setAdminIssuanceLeaderboard(leaderboard)
     } catch (e) {
       console.error('Admin pipeline error:', e)
       setAdminPipelineGroups([])
     } finally {
       setAdminPipelineLoading(false)
-    }
-  }
-
-  async function loadSharedLeaderboard() {
-    setSharedLeaderboardLoading(true)
-    try {
-      const { data: coupons } = await supabase
-        .from('coupons')
-        .select('issued_by, advisor_name')
-        .eq('coupon_type', 'LOYALTY')
-
-      const map: Record<string, { name: string; code: string | null; count: number }> = {}
-      ;(coupons || []).forEach((c: any) => {
-        const key = c.issued_by || 'unknown'
-        if (!map[key]) map[key] = { name: c.advisor_name || 'Unknown', code: null, count: 0 }
-        map[key].count++
-      })
-      const leaderboard = Object.values(map)
-        .filter(e => e.name !== 'Unknown')
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 5)
-      setSharedLeaderboard(leaderboard)
-    } catch (e) {
-      console.error('Shared leaderboard error:', e)
-    } finally {
-      setSharedLeaderboardLoading(false)
     }
   }
 
@@ -657,7 +687,7 @@ export default function DashboardPage() {
   const isAdvisor = profile?.user_role === 'SERVICE_ADVISOR' || profile?.user_role === 'BMW_SERVICE_ADVISOR'
   const isAdmin = profile?.user_role === 'ADMIN'
   const isReceptionist = profile?.user_role === 'RECEPTIONIST'
-  const isManagerOrAGM = profile?.user_role === 'MANAGER' || profile?.user_role === 'ASSISTANT_GENERAL_MANAGER'
+  const canLogInvoices = profile?.user_role && ['ADMIN', 'MANAGER', 'ASSISTANT_GENERAL_MANAGER', 'CEO'].includes(profile.user_role)
 
   // ─── Render: Loyalty table for receptionist/admin ─────────────────────────
 
@@ -712,20 +742,6 @@ export default function DashboardPage() {
         </div>
       )
     }
-
-    const cols = showAdvisorCol
-      ? (showLastNotified ? '1.2fr 1fr 1fr 1fr 1.4fr 1.2fr 120px' : '1.2fr 1fr 1fr 1fr 1.8fr 120px')
-      : (showLastNotified ? '1.4fr 1.2fr 1.2fr 1fr 1.6fr 1.2fr 120px' : '1.4fr 1.2fr 1.2fr 1fr 2fr 120px')
-
-    const headers = [
-      (brands[filtered[0]?.offer_id]?.loyalty_brand || 'Loyalty') + ' Plate',
-      ...(showAdvisorCol ? ['Advisor'] : []),
-      'Mobile',
-      (brands[filtered[0]?.offer_id]?.referral_brand || 'Referral') + ' Referrals',
-      'Eligible Reward',
-      ...(showLastNotified ? ['Last Notified'] : []),
-      ...(showWhatsApp ? ['Action'] : []),
-    ]
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -998,6 +1014,156 @@ export default function DashboardPage() {
     )
   }
 
+  // ─── Render: Shared Advisor Performance Leaderboard ─────────────────────────
+
+  function renderAdvisorLeaderboardSection() {
+    if (leaderboardLoading) {
+      return (
+        <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', marginBottom: '32px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+            <span style={{ fontSize: '18px' }}>🏆</span>
+            <div style={{ height: '20px', width: '150px', backgroundColor: '#F0F0F0', borderRadius: '4px', animation: 'pulse 1.5s ease-in-out infinite' }} />
+          </div>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} style={{ height: '48px', backgroundColor: '#F0F0F0', borderRadius: '8px', marginTop: '12px', animation: 'pulse 1.5s ease-in-out infinite' }} />
+          ))}
+        </div>
+      )
+    }
+
+    if (!Array.isArray(leaderboardData) || leaderboardData.length === 0) {
+      return (
+        <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', marginBottom: '32px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+            <span style={{ fontSize: '18px' }}>🏆</span>
+            <h3 style={{ fontSize: '14px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>Advisor Leaderboard</h3>
+          </div>
+          <p style={{ fontSize: '13px', color: '#888', margin: 0 }}>No leaderboard data available.</p>
+        </div>
+      )
+    }
+
+    // Verify and sort client-side by score DESC as a safeguard before rendering
+    const sortedLeaderboard = [...leaderboardData]
+      .filter(row => row && typeof row === 'object')
+      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+
+    if (sortedLeaderboard.length === 0) {
+      return (
+        <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', marginBottom: '32px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+            <span style={{ fontSize: '18px' }}>🏆</span>
+            <h3 style={{ fontSize: '14px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>Advisor Leaderboard</h3>
+          </div>
+          <p style={{ fontSize: '13px', color: '#888', margin: 0 }}>No leaderboard data available.</p>
+        </div>
+      )
+    }
+
+    return (
+      <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', marginBottom: '32px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px' }}>
+          <span style={{ fontSize: '18px' }}>🏆</span>
+          <h3 style={{ fontSize: '14px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>Advisor Leaderboard</h3>
+          <span style={{ fontSize: '12px', color: '#888', marginLeft: 'auto' }}>Invoice Match Score (%)</span>
+        </div>
+
+        <div style={{ overflowX: 'auto' }}>
+          <div style={{ minWidth: '600px' }}>
+            {/* Table headers */}
+            <div style={{ display: 'grid', gridTemplateColumns: '60px 2fr 1.2fr 1.2fr 2fr', padding: '10px 16px', backgroundColor: '#F7F7F7', borderRadius: '8px', borderBottom: '1px solid #EEEEEE', fontWeight: '700', fontSize: '11px', color: '#666', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <span>Rank</span>
+              <span>Advisor Name</span>
+              <span style={{ textAlign: 'right' }}>Invoices This Month</span>
+              <span style={{ textAlign: 'right' }}>Coupons This Month</span>
+              <span style={{ textAlign: 'right' }}>Score</span>
+            </div>
+
+            {/* Table rows */}
+            {sortedLeaderboard.map((row, idx) => {
+              // Assign rank numbers AFTER sorting (from the sorted index)
+              const rank = idx + 1
+              const medalColors = ['#f59e0b', '#94a3b8', '#b45309']
+              const isMedal = rank <= 3
+              const scoreVal = typeof row.score === 'number' ? row.score : 0
+              const barWidth = Math.min(100, Math.max(0, scoreVal))
+              const name = row.advisor_name || 'Unknown'
+              const invoices = row.invoices_count ?? 0
+              const coupons = row.coupons_count ?? 0
+
+              const rankBg = rank === 1 ? '#f59e0b' : rank === 2 ? '#94a3b8' : rank === 3 ? '#b45309' : '#F0F0F0'
+              const rankText = rank <= 3 ? '#FFFFFF' : '#666'
+              const glowColor = rank === 1 ? '#f59e0b' : rank === 2 ? '#94a3b8' : rank === 3 ? '#b45309' : '#9ca3af'
+              const scoreColorHex = scoreVal >= 70 ? '#16a34a' : scoreVal >= 40 ? '#d97706' : '#dc2626'
+              const scoreColorRgb = scoreVal >= 70 ? '22, 163, 74' : scoreVal >= 40 ? '217, 119, 6' : '220, 38, 38'
+
+              return (
+                <div
+                  key={idx}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '60px 2fr 1.2fr 1.2fr 2fr',
+                    padding: '14px 16px',
+                    borderBottom: idx < sortedLeaderboard.length - 1 ? '1px solid #F5F5F5' : 'none',
+                    alignItems: 'center',
+                    fontSize: '13px',
+                    color: '#1A1A1A'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                    <div
+                      style={{
+                        width: '24px',
+                        height: '24px',
+                        borderRadius: '50%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '11px',
+                        fontWeight: '700',
+                        backgroundColor: rankBg,
+                        color: rankText,
+                        boxShadow: `0 0 0 2px rgba(${hexToRgbStr(glowColor)}, 0.2), 0 0 8px rgba(${hexToRgbStr(glowColor)}, 0.6)`,
+                      }}
+                    >
+                      {rank}
+                    </div>
+                  </div>
+
+                  <span style={{ fontWeight: '600' }}>{name}</span>
+
+                  <span style={{ textAlign: 'right', fontFamily: 'monospace' }}>{invoices}</span>
+
+                  <span style={{ textAlign: 'right', fontFamily: 'monospace' }}>{coupons}</span>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                    <span style={{
+                      fontWeight: '700',
+                      color: scoreColorHex,
+                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
+                    }}>
+                      {scoreVal.toFixed(1)}%
+                    </span>
+                    <div style={{ height: '4px', width: '100px', backgroundColor: '#F0F0F0', borderRadius: '100px' }}>
+                      <div style={{
+                        height: '100%',
+                        borderRadius: '100px',
+                        background: `linear-gradient(90deg, rgba(${scoreColorRgb}, 0.4), ${scoreColorHex})`,
+                        width: `${barWidth}%`,
+                        boxShadow: `0 1px 6px rgba(${scoreColorRgb}, 0.5)`,
+                        transition: 'width 0.4s ease'
+                      }} />
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   // ─── Toast + style ────────────────────────────────────────────────────────
 
   const toastEl = toast && (
@@ -1084,41 +1250,8 @@ export default function DashboardPage() {
             <StatCard label="Commission Earned" value={advisorTotalCommission} color="#f59e0b" loading={advisorLoading} format="currency" />
           </div>
 
-          {advisorLeaderboard.length > 0 && (
-            <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '20px 24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', marginBottom: '28px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                <span style={{ fontSize: '16px' }}>🏆</span>
-                <h3 style={{ fontSize: '14px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>Top Issuers</h3>
-                <span style={{ fontSize: '12px', color: '#888', marginLeft: 'auto' }}>Loyalty coupons issued</span>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {advisorLeaderboard.map((entry, i) => {
-                  const medalColors = ['#f59e0b', '#94a3b8', '#b45309']
-                  const isMedal = i < 3
-                  const barWidth = advisorLeaderboard[0].count > 0 ? (entry.count / advisorLeaderboard[0].count) * 100 : 0
-                  const barColor = i === 0 ? '#f59e0b' : i === 1 ? '#94a3b8' : i === 2 ? '#b45309' : '#0074BD'
-                  return (
-                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: entry.isMe ? '8px 10px' : '0', borderRadius: entry.isMe ? '10px' : '0', backgroundColor: entry.isMe ? '#F0F7FF' : 'transparent', border: entry.isMe ? '1.5px solid #0074BD' : 'none', margin: entry.isMe ? '2px 0' : '0' }}>
-                      <div style={{ width: '24px', height: '24px', borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '700', backgroundColor: isMedal ? medalColors[i] : '#F0F0F0', color: isMedal ? '#FFFFFF' : '#666' }}>
-                        {i + 1}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                          <span style={{ fontSize: '13px', fontWeight: entry.isMe ? '700' : '600', color: entry.isMe ? '#0074BD' : '#1A1A1A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {entry.name}{entry.isMe ? ' (You)' : ''}
-                          </span>
-                          <span style={{ fontSize: '13px', fontWeight: '700', color: barColor, flexShrink: 0, marginLeft: '8px' }}>{entry.count}</span>
-                        </div>
-                        <div style={{ height: '5px', backgroundColor: '#F0F0F0', borderRadius: '100px', overflow: 'hidden' }}>
-                          <div style={{ height: '100%', borderRadius: '100px', backgroundColor: entry.isMe ? '#0074BD' : barColor, width: `${barWidth}%`, transition: 'width 0.5s ease' }} />
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )}
+          {/* Advisor match score leaderboard */}
+          {renderAdvisorLeaderboardSection()}
 
           {/* Quick actions */}
           <div style={{ display: 'flex', gap: '12px', marginBottom: '36px' }}>
@@ -1158,21 +1291,44 @@ export default function DashboardPage() {
       {styleEl}{toastEl}
       <Navbar />
       <main style={{ padding: '0 32px 48px' }}>
-        <div style={{ marginBottom: '32px' }}>
-          <h1 style={{ fontSize: '22px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>Good {getGreeting()}, {profile?.full_name?.split(' ')[0] || 'there'} 👋</h1>
-          <p style={{ color: '#666666', fontSize: '14px', marginTop: '6px' }}>
-            {new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}
-          </p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px', flexWrap: 'wrap', gap: '16px' }}>
+          <div>
+            <h1 style={{ fontSize: '22px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>Good {getGreeting()}, {profile?.full_name?.split(' ')[0] || 'there'} 👋</h1>
+            <p style={{ color: '#666666', fontSize: '14px', marginTop: '6px' }}>
+              {new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+            </p>
+          </div>
+          {canLogInvoices && (
+            <button
+              onClick={() => setIsInvoiceDialogOpen(true)}
+              style={{
+                padding: '10px 20px',
+                backgroundColor: '#162860',
+                color: '#FFFFFF',
+                border: 'none',
+                borderRadius: '10px',
+                fontSize: '14px',
+                fontWeight: '600',
+                cursor: 'pointer',
+                transition: 'background-color 0.2s',
+              }}
+            >
+              Log Invoices
+            </button>
+          )}
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px', marginBottom: '32px' }}>
-          <StatCard label="Total Coupons" value={stats.totalCoupons} color="#0074BD" loading={loading} subtitle="Customers served" />
-          <StatCard label="Active" value={stats.activeCoupons} color="#16a34a" loading={loading} />
-          <StatCard label="Redeemed" value={stats.redeemedCoupons} color="#9333ea" loading={loading} />
-          <StatCard label="Expired" value={stats.expiredCoupons} color="#666666" loading={loading} />
-          <StatCard label="Issued Today" value={stats.todaysCoupons} color="#f59e0b" loading={loading} />
-          <StatCard label="Active Advisors" value={stats.totalAdvisors} color="#162860" loading={loading} />
+        {/* Stats grid: 5 uniform cards */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '32px' }}>
+          <StatCard label="Customers Served" value={stats.totalCoupons} color="#0074BD" loading={loading} icon="👥" subtitle="Unique customers issued Mercedes coupons" />
+          <StatCard label="Coupons Issued" value={stats.totalCouponRows} color="#7c3aed" loading={loading} icon="🎟️" subtitle={`${stats.totalCoupons} Mercedes + ${stats.totalCoupons} BMW`} />
+          <StatCard label="BMW Referral Visits" value={stats.referralVisits} color="#16a34a" loading={loading} icon="🚗" subtitle="BMW coupons redeemed at service" />
+          <StatCard label="Mercedes Redeemed" value={stats.redeemedCoupons} color="#9333ea" loading={loading} icon="✅" subtitle="Mercedes coupons marked redeemed" />
+          <StatCard label="Customers Issued Today" value={stats.todaysCoupons} color="#f59e0b" loading={loading} icon="📅" subtitle="Unique customers, not coupon rows" />
         </div>
+
+        {/* Advisor performance leaderboard */}
+        {renderAdvisorLeaderboardSection()}
 
         <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', marginBottom: '40px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
@@ -1188,50 +1344,6 @@ export default function DashboardPage() {
             </div>
           ) : recentCoupons.map(coupon => <RecentCouponRow key={coupon.coupon_code} coupon={coupon} />)}
         </div>
-
-        {isManagerOrAGM && (
-          <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '20px 24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', marginBottom: '40px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-              <span style={{ fontSize: '16px' }}>🏆</span>
-              <h3 style={{ fontSize: '14px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>Top Issuers</h3>
-              <span style={{ fontSize: '12px', color: '#888', marginLeft: 'auto' }}>Loyalty coupons issued</span>
-            </div>
-            {sharedLeaderboardLoading ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <div key={i} style={{ height: '36px', backgroundColor: '#F0F0F0', borderRadius: '8px', animation: 'pulse 1.5s ease-in-out infinite' }} />
-                ))}
-              </div>
-            ) : sharedLeaderboard.length === 0 ? (
-              <p style={{ fontSize: '13px', color: '#888', margin: 0 }}>No coupon data yet.</p>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {sharedLeaderboard.map((entry, i) => {
-                  const medalColors = ['#f59e0b', '#94a3b8', '#b45309']
-                  const isMedal = i < 3
-                  const barWidth = sharedLeaderboard[0].count > 0 ? (entry.count / sharedLeaderboard[0].count) * 100 : 0
-                  const barColor = i === 0 ? '#f59e0b' : i === 1 ? '#94a3b8' : i === 2 ? '#b45309' : '#0074BD'
-                  return (
-                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <div style={{ width: '24px', height: '24px', borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '700', backgroundColor: isMedal ? medalColors[i] : '#F0F0F0', color: isMedal ? '#FFFFFF' : '#666' }}>
-                        {i + 1}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                          <span style={{ fontSize: '13px', fontWeight: '600', color: '#1A1A1A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.name}</span>
-                          <span style={{ fontSize: '13px', fontWeight: '700', color: barColor, flexShrink: 0, marginLeft: '8px' }}>{entry.count}</span>
-                        </div>
-                        <div style={{ height: '5px', backgroundColor: '#F0F0F0', borderRadius: '100px', overflow: 'hidden' }}>
-                          <div style={{ height: '100%', borderRadius: '100px', backgroundColor: barColor, width: `${barWidth}%`, transition: 'width 0.5s ease' }} />
-                        </div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        )}
 
         {/* Loyalty Rewards Dashboard */}
         {isAdmin && (
@@ -1308,50 +1420,47 @@ export default function DashboardPage() {
                     { label: 'Issued This Month', value: adminPipelineStats.issuedThisMonth, color: '#0074BD', format: 'number' as const },
                     { label: 'Referral Visits', value: adminPipelineStats.totalVisits, color: '#16a34a', format: 'number' as const },
                     { label: 'Commission Earned', value: adminPipelineStats.totalCommission, color: '#f59e0b', format: 'currency' as const },
-                  ].map(s => (
-                    <div key={s.label} style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '20px 24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', borderLeft: `4px solid ${s.color}` }}>
-                      <p style={{ fontSize: '12px', color: '#666', fontWeight: '500', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{s.label}</p>
-                      <p style={{ fontSize: '28px', fontWeight: '700', color: '#1A1A1A', margin: 0, lineHeight: 1 }}>
-                        {s.format === 'currency' ? `AED ${s.value.toLocaleString()}` : s.value.toLocaleString()}
-                      </p>
-                    </div>
-                  ))
+                  ].map(s => {
+                    const rgb = hexToRgbStr(s.color)
+                    return (
+                      <div key={s.label} style={{
+                        background: 'linear-gradient(180deg, #FFFFFF 0%, #FCFCFC 100%)',
+                        borderRadius: '16px',
+                        padding: '20px 24px',
+                        boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+                        border: '1px solid #F0F0F0',
+                        position: 'relative',
+                        overflow: 'hidden',
+                      }}>
+                        {/* Top Edge Thin Gradient Border Glow */}
+                        <div style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          height: '3px',
+                          background: `linear-gradient(90deg, rgba(${rgb}, 0.2), ${s.color}, rgba(${rgb}, 0.2))`,
+                          boxShadow: `0 1px 6px rgba(${rgb}, 0.5)`,
+                        }} />
+
+                        <p style={{ fontSize: '12px', color: '#666', fontWeight: '500', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: '3px' }}>{s.label}</p>
+                        <p style={{
+                          fontSize: '28px',
+                          fontWeight: '700',
+                          color: '#1A1A1A',
+                          margin: 0,
+                          lineHeight: 1,
+                          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                          fontVariantNumeric: 'tabular-nums',
+                          letterSpacing: '0.025em'
+                        }}>
+                          {s.format === 'currency' ? `AED ${s.value.toLocaleString()}` : s.value.toLocaleString()}
+                        </p>
+                      </div>
+                    )
+                  })
                 )}
               </div>
-
-              {adminIssuanceLeaderboard.length > 0 && (
-                <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '20px 24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', marginBottom: '24px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                    <span style={{ fontSize: '16px' }}>🏆</span>
-                    <h3 style={{ fontSize: '14px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>Top Issuers</h3>
-                    <span style={{ fontSize: '12px', color: '#888', marginLeft: 'auto' }}>Loyalty coupons issued</span>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    {adminIssuanceLeaderboard.map((entry, i) => {
-                      const medalColors = ['#f59e0b', '#94a3b8', '#b45309']
-                      const isMedal = i < 3
-                      const barWidth = adminIssuanceLeaderboard[0].count > 0 ? (entry.count / adminIssuanceLeaderboard[0].count) * 100 : 0
-                      const barColor = i === 0 ? '#f59e0b' : i === 1 ? '#94a3b8' : i === 2 ? '#b45309' : '#0074BD'
-                      return (
-                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                          <div style={{ width: '24px', height: '24px', borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '700', backgroundColor: isMedal ? medalColors[i] : '#F0F0F0', color: isMedal ? '#FFFFFF' : '#666' }}>
-                            {i + 1}
-                          </div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                              <span style={{ fontSize: '13px', fontWeight: '600', color: '#1A1A1A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.name}</span>
-                              <span style={{ fontSize: '13px', fontWeight: '700', color: barColor, flexShrink: 0, marginLeft: '8px' }}>{entry.count}</span>
-                            </div>
-                            <div style={{ height: '5px', backgroundColor: '#F0F0F0', borderRadius: '100px', overflow: 'hidden' }}>
-                              <div style={{ height: '100%', borderRadius: '100px', backgroundColor: barColor, width: `${barWidth}%`, transition: 'width 0.5s ease' }} />
-                            </div>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
 
               <div style={{ marginBottom: '20px' }}>
                 <input value={adminPipelineSearch} onChange={e => setAdminPipelineSearch(e.target.value.replace(/[<>]/g, '').slice(0, 100))} placeholder="Search by plate, advisor, coupon code…"
@@ -1366,7 +1475,20 @@ export default function DashboardPage() {
             </div>
           </>
         )}
-      </main>
-    </div>
-  )
-}
+        </main>
+
+        {/* Invoice Entry Dialog */}
+        {profile?.id && (
+          <InvoiceEntryDialog
+            isOpen={isInvoiceDialogOpen}
+            onClose={() => {
+              setIsInvoiceDialogOpen(false)
+              loadDashboard()
+            }}
+            currentUserId={profile.id}
+            currentUserRole={profile.user_role}
+          />
+        )}
+      </div>
+    )
+  }
