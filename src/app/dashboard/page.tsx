@@ -120,8 +120,8 @@ function Pagination({ total, page, onPage }: { total: number; page: number; onPa
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function StatCard({ label, value, color, loading, format = 'number' }: {
-  label: string; value: number; color: string; loading: boolean; format?: 'number' | 'currency'
+function StatCard({ label, value, color, loading, format = 'number', subtitle }: {
+  label: string; value: number; color: string; loading: boolean; format?: 'number' | 'currency'; subtitle?: string
 }) {
   return (
     <div style={{
@@ -136,6 +136,9 @@ function StatCard({ label, value, color, loading, format = 'number' }: {
           {format === 'currency' ? `AED ${value.toLocaleString()}` : value.toLocaleString()}
         </p>
       }
+      {subtitle && (
+        <p style={{ fontSize: '11px', color: '#999999', margin: 0 }}>{subtitle}</p>
+      )}
     </div>
   )
 }
@@ -1163,7 +1166,7 @@ export default function DashboardPage() {
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px', marginBottom: '32px' }}>
-          <StatCard label="Total Coupons" value={stats.totalCoupons} color="#0074BD" loading={loading} />
+          <StatCard label="Total Coupons" value={stats.totalCoupons} color="#0074BD" loading={loading} subtitle="Customers served" />
           <StatCard label="Active" value={stats.activeCoupons} color="#16a34a" loading={loading} />
           <StatCard label="Redeemed" value={stats.redeemedCoupons} color="#9333ea" loading={loading} />
           <StatCard label="Expired" value={stats.expiredCoupons} color="#666666" loading={loading} />

@@ -39,7 +39,7 @@ interface OfferStage {
 
 interface WhatsAppTemplate {
     id?: string
-    trigger_type: 'SA_INVOICE' | 'STAGE_1' | 'STAGE_2' | 'STAGE_3'
+    trigger_type: 'SA_INVOICE' | 'STAGE_1' | 'STAGE_2' | 'STAGE_3' | 'COUPON_CREATED_LOYALTY' | 'COUPON_CREATED_REFERRAL'
     message_body: string
 }
 
@@ -111,6 +111,8 @@ const WA_TRIGGER_LABELS: Record<string, string> = {
     STAGE_1: 'Stage 1 Milestone',
     STAGE_2: 'Stage 2 Milestone',
     STAGE_3: 'Stage 3 Milestone',
+    COUPON_CREATED_LOYALTY: 'Loyalty Coupon Created (sent on issuance)',
+    COUPON_CREATED_REFERRAL: 'Referral Coupon Created (sent on issuance)',
 }
 
 const WA_TRIGGER_VARIABLES: Record<string, string[]> = {
@@ -118,6 +120,8 @@ const WA_TRIGGER_VARIABLES: Record<string, string[]> = {
     STAGE_1: ['[PLATE_NO]', '[LOYALTY_COUPON_CODE]', '[STAGE]', '[REWARD_LABEL]'],
     STAGE_2: ['[PLATE_NO]', '[LOYALTY_COUPON_CODE]', '[STAGE]', '[REWARD_LABEL]'],
     STAGE_3: ['[PLATE_NO]', '[LOYALTY_COUPON_CODE]', '[STAGE]', '[REWARD_LABEL]'],
+    COUPON_CREATED_LOYALTY: ['[LOYALTY_COUPON_CODE]', '[OFFER_TITLE]', '[LOYALTY_EXPIRY_DATE]', '[ADVISOR_NAME]', '[PLATE_NUMBER]', '[MOBILE_NUMBER]'],
+    COUPON_CREATED_REFERRAL: ['[REFERRAL_COUPON_CODE]', '[OFFER_TITLE]', '[REFERRAL_EXPIRY_DATE]', '[ADVISOR_NAME]', '[PLATE_NUMBER]', '[MOBILE_NUMBER]'],
 }
 
 const OPTIONAL_LABELS: Record<string, string> = {
@@ -163,6 +167,8 @@ export default function OfferForm({ mode, initialData }: OfferFormProps) {
         { trigger_type: 'STAGE_1', message_body: '' },
         { trigger_type: 'STAGE_2', message_body: '' },
         { trigger_type: 'STAGE_3', message_body: '' },
+        { trigger_type: 'COUPON_CREATED_LOYALTY', message_body: '' },
+        { trigger_type: 'COUPON_CREATED_REFERRAL', message_body: '' },
     ])
     const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
     const [showOptionalConfirm, setShowOptionalConfirm] = useState(false)

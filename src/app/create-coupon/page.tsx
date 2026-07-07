@@ -761,6 +761,7 @@ function SuccessScreen({ coupons, offer, sequenceNumber, onCreateAnother }: {
   const [actionedIds, setActionedIds] = useState<Set<string>>(new Set())
   const [waActionedIds, setWaActionedIds] = useState<Set<string>>(new Set())
   const [showSuccessDialog, setShowSuccessDialog] = useState(false)
+  const [waTemplates, setWaTemplates] = useState<Record<string, string>>({})
 
   const mCoupon = coupons.find(c => c.coupon_type === 'LOYALTY')
   const bCoupon = coupons.find(c => c.coupon_type === 'REFERRAL')
@@ -790,6 +791,23 @@ function SuccessScreen({ coupons, offer, sequenceNumber, onCreateAnother }: {
       data.forEach((t: any) => { map[t.coupon_type === 'M' ? 'LOYALTY' : t.coupon_type === 'B' ? 'REFERRAL' : t.coupon_type] = t })
       setTemplates(map)
     }
+
+    const { data: waData } = await supabase
+      .from('offer_whatsapp_templates')
+      .select('trigger_type, message_body')
+      .eq('offer_id', offerId)
+      .in('trigger_type', ['COUPON_CREATED_LOYALTY', 'COUPON_CREATED_REFERRAL'])
+
+    if (waData) {
+      const waMap: Record<string, string> = {}
+      waData.forEach((row: any) => {
+        if (row.message_body && row.message_body.trim() !== '') {
+          waMap[row.trigger_type] = row.message_body
+        }
+      })
+      setWaTemplates(waMap)
+    }
+
     setTemplatesLoaded(true)
   }
 
@@ -839,9 +857,33 @@ function SuccessScreen({ coupons, offer, sequenceNumber, onCreateAnother }: {
   }
 
   function handleWhatsApp(coupon: any) {
-    const message = encodeURIComponent(
-      `Hi! Here is your AutoVersa coupon\n\nCoupon Code: ${coupon.coupon_code}\nOffer: ${coupon.offer_title}\nExpiry: ${formatDate(coupon.expiry_date)}\n\nPlease present this code at the service centre.`
-    )
+    const triggerKey = coupon.coupon_type === 'LOYALTY' ? 'COUPON_CREATED_LOYALTY' : 'COUPON_CREATED_REFERRAL'
+    let messageText = ''
+
+    if (waTemplates[triggerKey]) {
+      let template = waTemplates[triggerKey]
+      const variables = resolveVariableValues(coupon)
+      const placeholders = [
+        '[LOYALTY_COUPON_CODE]',
+        '[REFERRAL_COUPON_CODE]',
+        '[LOYALTY_EXPIRY_DATE]',
+        '[REFERRAL_EXPIRY_DATE]',
+        '[ADVISOR_NAME]',
+        '[OFFER_TITLE]',
+        '[PLATE_NUMBER]',
+        '[MOBILE_NUMBER]'
+      ]
+      placeholders.forEach(ph => {
+        const key = ph.slice(1, -1)
+        const val = variables[key] || ''
+        template = template.split(ph).join(val)
+      })
+      messageText = template
+    } else {
+      messageText = `Hi! Here is your AutoVersa coupon\n\nCoupon Code: ${coupon.coupon_code}\nOffer: ${coupon.offer_title}\nExpiry: ${formatDate(coupon.expiry_date)}\n\nPlease present this code at the service centre.`
+    }
+
+    const message = encodeURIComponent(messageText)
     // WhatsApp Web direct link — always use web.whatsapp.com/send?phone=...&text=... format for browser-based usage
     // Never use wa.me links — they trigger WhatsApp's redirect page before opening
     // Use named tab 'whatsapp_tab' to reuse existing WhatsApp Web tab if open
@@ -937,8 +979,8 @@ function SuccessScreen({ coupons, offer, sequenceNumber, onCreateAnother }: {
           </p>
         </div>
 
-        {mCoupon && renderCouponCard(mCoupon, '#162860', (offer?.loyalty_brand || 'Loyalty') + ' Coupon', 'Single-use · Tied to plate')}
         {bCoupon && renderCouponCard(bCoupon, '#0074BD', (offer?.referral_brand || 'Referral') + ' Coupon', 'Multi-use · Per-plate limit')}
+        {mCoupon && renderCouponCard(mCoupon, '#162860', (offer?.loyalty_brand || 'Loyalty') + ' Coupon', 'Single-use · Tied to plate')}
 
         <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
           <button onClick={onCreateAnother} style={{ flex: 1, padding: '12px', backgroundColor: '#0074BD', color: '#FFFFFF', border: 'none', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>
