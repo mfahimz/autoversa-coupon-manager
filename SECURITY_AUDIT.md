@@ -2,7 +2,7 @@
 
 | Zone | Last Checked | Result |
 |---|---|---|
-| 1. Data Access & Permissions | 2026-06-23 | 3 problems found, 1 critical |
+| 1. Data Access & Permissions | 2026-07-09 | 3 critical, 3 warnings |
 | 2. Business Rule Integrity | 2026-06-24 | 3 warnings, 2 informational |
 | 3. Input Validation, Storage & Session Handling | 2026-07-06 | 1 critical, 2 warnings, 1 informational |
 
@@ -12,19 +12,31 @@
 
 ### Critical
 - **Unscoped appointments query**:
-  - **What's wrong**: The query fetches all appointment rows (including sensitive PII) without scoping to `booked_by` or verifying the user role.
+  - **What's wrong**: The query fetches all appointment rows (including sensitive PII) without scoping to the logged-in user or verifying their role.
   - **Why it matters**: Service advisors and other non-admin roles can read private customer details and vehicle info of other advisors.
-  - **Where**: [src/app/appointments/page.tsx:L260-L265](file:///Users/fahim/autoversa-coupon-manager/src/app/appointments/page.tsx#L260-L265)
+  - **Where**: [src/app/appointments/page.tsx:L237](file:///Users/fahim/autoversa-coupon-manager/src/app/appointments/page.tsx#L237) and [src/app/appointments/page.tsx:L271-L276](file:///Users/fahim/autoversa-coupon-manager/src/app/appointments/page.tsx#L271-L276)
+- **Unscoped customers query**:
+  - **What's wrong**: The query fetches all company-wide customer records from `loyalty_customers` and `referral_customers` without applying any user or advisor filters.
+  - **Why it matters**: Non-admin roles (e.g. advisors) can retrieve customer PII for accounts and vehicles not assigned to them.
+  - **Where**: [src/app/customers/page.tsx:L122-L123](file:///Users/fahim/autoversa-coupon-manager/src/app/customers/page.tsx#L122-L123)
+- **Unscoped dashboard coupons query**:
+  - **What's wrong**: The page executes a query to fetch the 8 most recent coupons globally on page initialization, regardless of the logged-in user's role or scope.
+  - **Why it matters**: Service advisors or receptionists can read recent coupon data including customer names and coupon codes.
+  - **Where**: [src/app/dashboard/page.tsx:L342-L344](file:///Users/fahim/autoversa-coupon-manager/src/app/dashboard/page.tsx#L342-L344)
 
 ### Warning
 - **Missing `checkPermission()` verification on users page**:
   - **What's wrong**: The page bypasses the custom RBAC system and relies on a hardcoded role check (`profile?.user_role !== 'ADMIN'`).
   - **Why it matters**: Prevents delegating user management permissions to other roles and makes UI-configured permissions misleading.
-  - **Where**: [src/app/users/page.tsx:L154](file:///Users/fahim/autoversa-coupon-manager/src/app/users/page.tsx#L154)
+  - **Where**: [src/app/users/page.tsx:L166](file:///Users/fahim/autoversa-coupon-manager/src/app/users/page.tsx#L166)
 - **Missing `checkPermission()` verification on dashboard page**:
   - **What's wrong**: The page renders role-specific components directly without verifying if the user has `page:dashboard` view permissions.
   - **Why it matters**: Users can access dashboard endpoints and views directly via URL even if dashboard access is disabled for their role.
-  - **Where**: [src/app/dashboard/page.tsx:L213-L262](file:///Users/fahim/autoversa-coupon-manager/src/app/dashboard/page.tsx#L213-L262)
+  - **Where**: [src/app/dashboard/page.tsx:L238-L415](file:///Users/fahim/autoversa-coupon-manager/src/app/dashboard/page.tsx#L238-L415)
+- **Missing action-specific permission checks on users page**:
+  - **What's wrong**: User management mutations are executed without verifying user-specific action permissions (`action:permission:update`, `action:user:update_role`, `action:user:update_advisor_code`, `action:user:toggle_active`).
+  - **Why it matters**: Granular permissions defined in the RBAC registry are not enforced when actions are performed.
+  - **Where**: [src/app/users/page.tsx:L204](file:///Users/fahim/autoversa-coupon-manager/src/app/users/page.tsx#L204), [src/app/users/page.tsx:L247](file:///Users/fahim/autoversa-coupon-manager/src/app/users/page.tsx#L247), [src/app/users/page.tsx:L267](file:///Users/fahim/autoversa-coupon-manager/src/app/users/page.tsx#L267), and [src/app/users/page.tsx:L283](file:///Users/fahim/autoversa-coupon-manager/src/app/users/page.tsx#L283)
 
 ### Informational
 - **Unscoped database queries in legacy/unused queries helper**:

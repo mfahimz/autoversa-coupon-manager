@@ -209,6 +209,7 @@ export default function AppointmentsPage() {
   const [jobCardSubOffers, setJobCardSubOffers] = useState<SubOffer[]>([])
   const [jobCardSubOffer, setJobCardSubOffer] = useState('')
   const [jobCardSubOfferLoading, setJobCardSubOfferLoading] = useState(false)
+  const [invoiceNumber, setInvoiceNumber] = useState('')
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
 
@@ -576,6 +577,7 @@ export default function AppointmentsPage() {
     setJobCardSubOffer(appt.sub_offer_id || '')
     setJobCardSubOffers([])
     setErrors({})
+    setInvoiceNumber('')
     setShowStatusModal(true)
 
     if (appt.offer_id) {
@@ -634,6 +636,9 @@ export default function AppointmentsPage() {
     if (statusNote && statusNote.length > 500) {
       newErrors.statusNote = 'Notes must be maximum 500 characters'
     }
+    if (newStatus === 'visited' && !invoiceNumber.trim()) {
+      newErrors.invoiceNumber = 'Invoice number is required to mark visited'
+    }
 
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors)
@@ -667,6 +672,10 @@ export default function AppointmentsPage() {
     if (newStatus === 'job_card_open' && subOfferObj) {
       updatePayload.sub_offer_id = subOfferObj.id
       updatePayload.sub_offer_name = subOfferObj.name
+    }
+
+    if (newStatus === 'visited') {
+      updatePayload.invoice_number = invoiceNumber.trim()
     }
 
     const { error } = await supabase
@@ -704,6 +713,54 @@ export default function AppointmentsPage() {
 
       if (selectedAppt.offer_id) {
         await supabase.rpc('increment_offer_visited_count', { offer_id_input: selectedAppt.offer_id })
+      }
+
+      // Fetch and calculate commission split if coupon was created by receptionist
+      if (selectedAppt.coupon_id) {
+        try {
+          const { data: couponData, error: couponFetchError } = await supabase
+            .from('coupons')
+            .select('id, offer_id, issued_by, advisor_name, advisor_code, created_by_receptionist')
+            .eq('id', selectedAppt.coupon_id)
+            .single()
+
+          if (couponFetchError) {
+            console.error('Error fetching referral coupon for commission split:', couponFetchError)
+          } else if (couponData && couponData.created_by_receptionist === true && couponData.offer_id && couponData.issued_by) {
+            const { data: offerData, error: offerFetchError } = await supabase
+              .from('offers')
+              .select('commission_amount')
+              .eq('id', couponData.offer_id)
+              .single()
+
+            if (offerFetchError) {
+              console.error('Error fetching offer commission for commission split:', offerFetchError)
+            } else if (offerData) {
+              const commissionAmount = offerData.commission_amount || 0
+              const receptionistAmount = commissionAmount / 2
+              const advisorAmount = commissionAmount / 2
+
+              const { error: splitInsertError } = await supabase
+                .from('coupon_commission_splits')
+                .upsert({
+                  coupon_id: couponData.id,
+                  offer_id: couponData.offer_id,
+                  receptionist_id: couponData.issued_by,
+                  advisor_code: couponData.advisor_code || '',
+                  advisor_name: couponData.advisor_name || '',
+                  total_commission_amount: commissionAmount,
+                  receptionist_amount: receptionistAmount,
+                  advisor_amount: advisorAmount,
+                }, { onConflict: 'coupon_id', ignoreDuplicates: true })
+
+              if (splitInsertError) {
+                console.error('Error inserting coupon commission split:', splitInsertError)
+              }
+            }
+          }
+        } catch (err) {
+          console.error('Unexpected error in coupon commission split logic:', err)
+        }
       }
     } else if (autoCancel) {
       showToast('3 unreachable attempts — appointment auto-cancelled')
@@ -1158,7 +1215,7 @@ export default function AppointmentsPage() {
                           key={s}
                           onClick={() => {
                             setNewStatus(s)
-                            setErrors(prev => { const copy = { ...prev }; delete copy.statusNote; delete copy.rescheduleDate; delete copy.rescheduleTime; delete copy.jobCardSubOffer; return copy })
+                            setErrors(prev => { const copy = { ...prev }; delete copy.statusNote; delete copy.rescheduleDate; delete copy.rescheduleTime; delete copy.jobCardSubOffer; delete copy.invoiceNumber; return copy })
                           }}
                           style={{ padding: '12px 16px', borderRadius: '10px', cursor: 'pointer', border: `1.5px solid ${newStatus === s ? cfg.color : '#E0E0E0'}`, backgroundColor: newStatus === s ? cfg.bg : '#FFFFFF', display: 'flex', alignItems: 'center', gap: '10px' }}
                         >
@@ -1219,6 +1276,29 @@ export default function AppointmentsPage() {
                       <p style={{ fontSize: '13px', color: '#666' }}>No sub-offers configured for this offer.</p>
                     )}
                     {errors.jobCardSubOffer && <p style={{ fontSize: '12px', color: '#D0021B', marginTop: '4px' }}>{errors.jobCardSubOffer}</p>}
+                  </div>
+                )}
+
+                {newStatus === 'visited' && (
+                  <div style={{ marginBottom: '16px' }}>
+                    <label style={labelStyle}>Invoice Number *</label>
+                    <input
+                      style={inputStyle}
+                      value={invoiceNumber}
+                      onChange={e => {
+                        const val = e.target.value.replace(/[<>]/g, '').slice(0, 100)
+                        setInvoiceNumber(val)
+                        if (val.trim()) {
+                          setErrors(prev => {
+                            const copy = { ...prev }
+                            delete copy.invoiceNumber
+                            return copy
+                          })
+                        }
+                      }}
+                      placeholder="e.g. INV-12345"
+                    />
+                    {errors.invoiceNumber && <p style={{ fontSize: '12px', color: '#D0021B', marginTop: '4px' }}>{errors.invoiceNumber}</p>}
                   </div>
                 )}
 

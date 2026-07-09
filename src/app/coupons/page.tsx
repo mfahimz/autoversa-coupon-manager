@@ -195,7 +195,8 @@ export default function CouponsPage() {
     }
 
     const isAdvisor = profileData?.user_role === 'SERVICE_ADVISOR' ||
-      profileData?.user_role === 'BMW_SERVICE_ADVISOR'
+      profileData?.user_role === 'BMW_SERVICE_ADVISOR' ||
+      profileData?.user_role === 'RECEPTIONIST'
 
     let query = supabase
       .from('coupons')

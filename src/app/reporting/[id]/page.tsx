@@ -9,6 +9,7 @@ import Navbar from '@/components/layout/Navbar'
 import Breadcrumb from '@/components/layout/Breadcrumb'
 import PageSkeleton from '@/components/layout/PageSkeleton'
 import { loadPermissionsForRole, checkPermission } from '@/lib/permissions'
+import { RECEPTIONIST_COUPON_CREATION_ENABLED } from '@/lib/featureFlags'
 
 import {
     BarChart, Bar, LineChart, Line,
@@ -59,6 +60,20 @@ interface AdvisorStat {
     commission: number
 }
 
+interface CommissionSplitRow {
+    id: string
+    coupon_id: string
+    coupon_code: string
+    receptionist_id: string
+    receptionist_name: string
+    advisor_code: string
+    advisor_name: string
+    total_commission_amount: number
+    receptionist_amount: number
+    advisor_amount: number
+    created_at: string
+}
+
 const LEADERBOARD_PAGE_SIZE = 10
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -99,6 +114,10 @@ export default function OfferReportPage() {
     const [appointments, setAppointments] = useState<Appointment[]>([])
     const [loading, setLoading] = useState(true)
 
+    // Splits state
+    const [commissionSplits, setCommissionSplits] = useState<CommissionSplitRow[]>([])
+    const [commissionSplitsLoading, setCommissionSplitsLoading] = useState(true)
+
     // Date filter
     const [dateFrom, setDateFrom] = useState('')
     const [dateTo, setDateTo] = useState('')
@@ -116,15 +135,29 @@ export default function OfferReportPage() {
 
     async function loadData() {
         setLoading(true)
+        if (RECEPTIONIST_COUPON_CREATION_ENABLED) {
+            setCommissionSplitsLoading(true)
+        }
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) { router.push('/login'); return }
 
-        const [profileResult, offerResult, couponResult, apptResult, stagesResult] = await Promise.all([
+        // Start splits query concurrently if flag is enabled
+        let splitsPromise = null
+        if (RECEPTIONIST_COUPON_CREATION_ENABLED) {
+            splitsPromise = supabase
+                .from('coupon_commission_splits')
+                .select('id, coupon_id, receptionist_id, advisor_code, advisor_name, total_commission_amount, receptionist_amount, advisor_amount, created_at')
+                .eq('offer_id', offerId)
+                .order('created_at', { ascending: false })
+        }
+
+        const [profileResult, offerResult, couponResult, apptResult, stagesResult, splitsResult] = await Promise.all([
             supabase.from('profiles').select('user_role, is_active').eq('id', user.id).single(),
             supabase.from('offers').select('id, title, is_active, coupon_cap, visited_count, commission_amount, issuance_start_date, issuance_end_date, first_batch_target, loyalty_brand, referral_brand').eq('id', offerId).single(),
             supabase.from('coupons').select('id, coupon_type, stage, issue_date, advisor_name, advisor_code, issued_by, status').eq('offer_id', offerId).order('issue_date'),
             supabase.from('appointments').select('id, coupon_id, status, appointment_date, sub_offer_name, created_at').eq('offer_id', offerId).order('appointment_date'),
             supabase.from('offer_stages').select('stage_number, reward_label').eq('offer_id', offerId).order('stage_number'),
+            (splitsPromise || Promise.resolve({ data: null })) as any,
         ])
 
         const { data: profileData } = profileResult
@@ -132,6 +165,7 @@ export default function OfferReportPage() {
         const { data: couponData } = couponResult
         const { data: apptData } = apptResult
         const { data: stagesData } = stagesResult
+        const { data: rawSplits } = splitsResult
 
         if (!profileData) {
             router.push('/login')
@@ -155,6 +189,39 @@ export default function OfferReportPage() {
         if (offerData) setOffer(offerData)
         if (couponData) setCoupons(couponData)
         if (apptData) setAppointments(apptData)
+
+        // Resolve joins for splits if splits exist
+        if (RECEPTIONIST_COUPON_CREATION_ENABLED && rawSplits && rawSplits.length > 0) {
+            const couponIds: string[] = Array.from(new Set<string>(rawSplits.map((s: any) => s.coupon_id as string)))
+            const receptionistIds: string[] = Array.from(new Set<string>(rawSplits.map((s: any) => s.receptionist_id as string)))
+
+            const [couponsRes, profilesRes] = await Promise.all([
+                supabase.from('coupons').select('id, coupon_code').in('id', couponIds),
+                supabase.from('profiles').select('id, full_name').in('id', receptionistIds),
+            ])
+
+            const couponMap = new Map(couponsRes.data?.map(c => [c.id, c.coupon_code]) || [])
+            const profileMap = new Map(profilesRes.data?.map(p => [p.id, p.full_name]) || [])
+
+            const merged: CommissionSplitRow[] = rawSplits.map((s: any) => ({
+                id: s.id,
+                coupon_id: s.coupon_id,
+                coupon_code: couponMap.get(s.coupon_id) || '—',
+                receptionist_id: s.receptionist_id,
+                receptionist_name: profileMap.get(s.receptionist_id) || '—',
+                advisor_code: s.advisor_code,
+                advisor_name: s.advisor_name,
+                total_commission_amount: s.total_commission_amount,
+                receptionist_amount: s.receptionist_amount,
+                advisor_amount: s.advisor_amount,
+                created_at: s.created_at || '',
+            }))
+            setCommissionSplits(merged)
+            setCommissionSplitsLoading(false)
+        } else {
+            setCommissionSplits([])
+            setCommissionSplitsLoading(false)
+        }
 
         // Auto-set date range from data
         if (couponData && couponData.length > 0) {
@@ -190,6 +257,49 @@ export default function OfferReportPage() {
             return true
         })
     }, [appointments, dateFrom, dateTo])
+
+    const filteredCommissionSplits = useMemo(() => {
+        if (!dateFrom && !dateTo) return commissionSplits
+        return commissionSplits.filter(cs => {
+            if (!cs.created_at) return false
+            const d = cs.created_at.split('T')[0]
+            if (dateFrom && d < dateFrom) return false
+            if (dateTo && d > dateTo) return false
+            return true
+        })
+    }, [commissionSplits, dateFrom, dateTo])
+
+    const commissionSplitSummary = useMemo(() => {
+        const groups: Record<string, {
+            receptionist_id: string
+            receptionist_name: string
+            advisor_code: string
+            advisor_name: string
+            splits_count: number
+            total_receptionist_earnings: number
+            total_advisor_earnings: number
+        }> = {}
+
+        filteredCommissionSplits.forEach(split => {
+            const key = `${split.receptionist_id}_${split.advisor_code}`
+            if (!groups[key]) {
+                groups[key] = {
+                    receptionist_id: split.receptionist_id,
+                    receptionist_name: split.receptionist_name,
+                    advisor_code: split.advisor_code,
+                    advisor_name: split.advisor_name,
+                    splits_count: 0,
+                    total_receptionist_earnings: 0,
+                    total_advisor_earnings: 0,
+                }
+            }
+            groups[key].splits_count++
+            groups[key].total_receptionist_earnings += split.receptionist_amount
+            groups[key].total_advisor_earnings += split.advisor_amount
+        })
+
+        return Object.values(groups).sort((a, b) => b.total_receptionist_earnings - a.total_receptionist_earnings)
+    }, [filteredCommissionSplits])
 
     // ── Derived metrics ────────────────────────────────────────────────────────
 
@@ -347,6 +457,9 @@ export default function OfferReportPage() {
 
     return (
         <div style={{ minHeight: '100vh', backgroundColor: '#F7F7F7', paddingTop: '16px' }}>
+            <style>{`
+                @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+            `}</style>
             <Navbar />
             <main style={{ padding: '0 32px 48px' }}>
                 <Breadcrumb items={[
@@ -642,6 +755,90 @@ export default function OfferReportPage() {
                         </>
                     )}
                 </div>
+
+                {/* Receptionist Commission Splits */}
+                {RECEPTIONIST_COUPON_CREATION_ENABLED && (
+                    <>
+                        <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', marginBottom: '24px' }}>
+                            <h3 style={{ fontSize: '14px', fontWeight: '700', color: '#1A1A1A', margin: '0 0 4px' }}>Receptionist Commission Splits</h3>
+                            <p style={{ fontSize: '12px', color: '#888', margin: '0 0 16px' }}>Detailed split log for receptionist-created coupons in selected range</p>
+                            
+                            {commissionSplitsLoading ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                    {Array.from({ length: 4 }).map((_, i) => (
+                                        <div key={i} style={{ height: '40px', backgroundColor: '#F0F0F0', borderRadius: '8px', animation: 'pulse 1.5s ease-in-out infinite' }} />
+                                    ))}
+                                </div>
+                            ) : filteredCommissionSplits.length === 0 ? (
+                                <div style={{ textAlign: 'center', padding: '32px', color: '#888', fontSize: '13px' }}>No receptionist-created coupons in this range.</div>
+                            ) : (
+                                <div style={{ overflowX: 'auto' }}>
+                                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                        <thead>
+                                            <tr style={{ backgroundColor: '#F7F7F7', borderBottom: '1px solid #E0E0E0' }}>
+                                                {['Coupon Code', 'Receptionist', 'Advisor', 'Total Commission', 'Receptionist Share', 'Advisor Share', 'Date'].map(h => (
+                                                    <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontSize: '11px', fontWeight: '700', color: '#666', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</th>
+                                                ))}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {filteredCommissionSplits.map((cs) => (
+                                                <tr key={cs.id} style={{ borderBottom: '1px solid #F5F5F5' }}>
+                                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#1A1A1A', fontFamily: 'monospace' }}>{cs.coupon_code}</td>
+                                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#1A1A1A' }}>{cs.receptionist_name}</td>
+                                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#444' }}>{cs.advisor_name}</td>
+                                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700', color: '#162860' }}>AED {cs.total_commission_amount.toLocaleString()}</td>
+                                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700', color: '#16a34a' }}>AED {cs.receptionist_amount.toLocaleString()}</td>
+                                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700', color: '#0074BD' }}>AED {cs.advisor_amount.toLocaleString()}</td>
+                                                    <td style={{ padding: '12px 16px', fontSize: '12px', color: '#666' }}>{formatDate(cs.created_at)}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Commission Split Summary */}
+                        <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', marginBottom: '24px' }}>
+                            <h3 style={{ fontSize: '14px', fontWeight: '700', color: '#1A1A1A', margin: '0 0 4px' }}>Commission Split Summary</h3>
+                            <p style={{ fontSize: '12px', color: '#888', margin: '0 0 16px' }}>Aggregated commission earnings grouped by receptionist and advisor pair</p>
+
+                            {commissionSplitsLoading ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                    {Array.from({ length: 3 }).map((_, i) => (
+                                        <div key={i} style={{ height: '40px', backgroundColor: '#F0F0F0', borderRadius: '8px', animation: 'pulse 1.5s ease-in-out infinite' }} />
+                                    ))}
+                                </div>
+                            ) : filteredCommissionSplits.length === 0 ? (
+                                <div style={{ textAlign: 'center', padding: '32px', color: '#888', fontSize: '13px' }}>No receptionist-created coupons in this range.</div>
+                            ) : (
+                                <div style={{ overflowX: 'auto' }}>
+                                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                        <thead>
+                                            <tr style={{ backgroundColor: '#F7F7F7', borderBottom: '1px solid #E0E0E0' }}>
+                                                {['Receptionist', 'Advisor', 'Number of Splits', 'Total Receptionist Earnings', 'Total Advisor Earnings'].map(h => (
+                                                    <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontSize: '11px', fontWeight: '700', color: '#666', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</th>
+                                                ))}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {commissionSplitSummary.map((summary, idx) => (
+                                                <tr key={idx} style={{ borderBottom: '1px solid #F5F5F5' }}>
+                                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '600', color: '#1A1A1A' }}>{summary.receptionist_name}</td>
+                                                    <td style={{ padding: '12px 16px', fontSize: '13px', color: '#444' }}>{summary.advisor_name} {summary.advisor_code ? `(${summary.advisor_code})` : ''}</td>
+                                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700', color: '#162860' }}>{summary.splits_count}</td>
+                                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700', color: '#16a34a' }}>AED {summary.total_receptionist_earnings.toLocaleString()}</td>
+                                                    <td style={{ padding: '12px 16px', fontSize: '13px', fontWeight: '700', color: '#0074BD' }}>AED {summary.total_advisor_earnings.toLocaleString()}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </div>
+                    </>
+                )}
 
             </main>
         </div>

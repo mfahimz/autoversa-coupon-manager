@@ -152,6 +152,7 @@ export type Database = {
           customer_mobile: string | null
           follow_up_note: string | null
           id: string
+          invoice_number: string | null
           not_reachable_count: number | null
           notes: string | null
           offer_id: string | null
@@ -177,6 +178,7 @@ export type Database = {
           customer_mobile?: string | null
           follow_up_note?: string | null
           id?: string
+          invoice_number?: string | null
           not_reachable_count?: number | null
           notes?: string | null
           offer_id?: string | null
@@ -202,6 +204,7 @@ export type Database = {
           customer_mobile?: string | null
           follow_up_note?: string | null
           id?: string
+          invoice_number?: string | null
           not_reachable_count?: number | null
           notes?: string | null
           offer_id?: string | null
@@ -328,6 +331,67 @@ export type Database = {
           },
         ]
       }
+      coupon_commission_splits: {
+        Row: {
+          advisor_amount: number
+          advisor_code: string
+          advisor_name: string
+          coupon_id: string
+          created_at: string | null
+          id: string
+          offer_id: string
+          receptionist_amount: number
+          receptionist_id: string
+          total_commission_amount: number
+        }
+        Insert: {
+          advisor_amount: number
+          advisor_code: string
+          advisor_name: string
+          coupon_id: string
+          created_at?: string | null
+          id?: string
+          offer_id: string
+          receptionist_amount: number
+          receptionist_id: string
+          total_commission_amount: number
+        }
+        Update: {
+          advisor_amount?: number
+          advisor_code?: string
+          advisor_name?: string
+          coupon_id?: string
+          created_at?: string | null
+          id?: string
+          offer_id?: string
+          receptionist_amount?: number
+          receptionist_id?: string
+          total_commission_amount?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "coupon_commission_splits_coupon_id_fkey"
+            columns: ["coupon_id"]
+            isOneToOne: true
+            referencedRelation: "coupons"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "coupon_commission_splits_offer_id_fkey"
+            columns: ["offer_id"]
+            isOneToOne: false
+            referencedRelation: "offers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "coupon_commission_splits_receptionist_id_fkey"
+            columns: ["receptionist_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       coupons: {
         Row: {
           advisor_code: string | null
@@ -336,6 +400,7 @@ export type Database = {
           coupon_code: string
           coupon_type: string | null
           created_at: string | null
+          created_by_receptionist: boolean | null
           customer_name: string | null
           customer_status: string | null
           expiry_date: string | null
@@ -373,6 +438,7 @@ export type Database = {
           coupon_code: string
           coupon_type?: string | null
           created_at?: string | null
+          created_by_receptionist?: boolean | null
           customer_name?: string | null
           customer_status?: string | null
           expiry_date?: string | null
@@ -410,6 +476,7 @@ export type Database = {
           coupon_code?: string
           coupon_type?: string | null
           created_at?: string | null
+          created_by_receptionist?: boolean | null
           customer_name?: string | null
           customer_status?: string | null
           expiry_date?: string | null

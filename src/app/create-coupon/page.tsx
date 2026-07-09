@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/layout/Navbar'
 import Breadcrumb from '@/components/layout/Breadcrumb'
 import { loadPermissionsForRole, checkPermission } from '@/lib/permissions'
+import { RECEPTIONIST_COUPON_CREATION_ENABLED } from '@/lib/featureFlags'
 
 
 interface Offer {
@@ -131,6 +132,7 @@ export default function CreateCouponPage() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [offers, setOffers] = useState<Offer[]>([])
   const [emirates, setEmirates] = useState<EmirateConfig[]>([])
+  const [advisors, setAdvisors] = useState<Profile[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
@@ -143,6 +145,7 @@ export default function CreateCouponPage() {
     emirate: '',
     plate_category: '',
     plate_number: '',
+    advisor_id: '',
   })
 
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -173,7 +176,9 @@ export default function CreateCouponPage() {
     }
 
     const perms = await loadPermissionsForRole(profileData.user_role)
-    if (!checkPermission(perms, profileData.user_role, 'page:create-coupon', 'view')) {
+    const hasPerm = checkPermission(perms, profileData.user_role, 'page:create-coupon', 'view') ||
+                    (profileData.user_role === 'RECEPTIONIST' && RECEPTIONIST_COUPON_CREATION_ENABLED)
+    if (!hasPerm) {
       router.push('/dashboard')
       return
     }
@@ -181,6 +186,17 @@ export default function CreateCouponPage() {
     if (profileData) setProfile(profileData)
     if (offersData) setOffers(offersData)
     if (emiratesData) setEmirates(emiratesData)
+
+    if (profileData.user_role === 'RECEPTIONIST' && RECEPTIONIST_COUPON_CREATION_ENABLED) {
+      const { data: advisorsData } = await supabase
+        .from('profiles')
+        .select('id, full_name, advisor_code, user_role')
+        .eq('is_active', true)
+        .in('user_role', ['SERVICE_ADVISOR', 'BMW_SERVICE_ADVISOR'])
+        .order('full_name')
+      if (advisorsData) setAdvisors(advisorsData)
+    }
+
     setLoading(false)
   }
 
@@ -219,10 +235,18 @@ export default function CreateCouponPage() {
     const newErrors: Record<string, string> = {}
     if (!form.offer_id) newErrors.offer_id = 'Please select an offer'
 
-    if (!form.invoice_number) {
-      newErrors.invoice_number = 'Invoice number is required'
-    } else if (!validateInvoiceNumber(form.invoice_number)) {
-      newErrors.invoice_number = 'Invoice number must start with "I" followed by up to 6 digits (e.g. I123456)'
+    const isReceptionistFlow = profile?.user_role === 'RECEPTIONIST' && RECEPTIONIST_COUPON_CREATION_ENABLED
+
+    if (!isReceptionistFlow) {
+      if (!form.invoice_number) {
+        newErrors.invoice_number = 'Invoice number is required'
+      } else if (!validateInvoiceNumber(form.invoice_number)) {
+        newErrors.invoice_number = 'Invoice number must start with "I" followed by up to 6 digits (e.g. I123456)'
+      }
+    } else {
+      if (!form.advisor_id) {
+        newErrors.advisor_id = 'Please select a Service Advisor'
+      }
     }
 
     if (!form.mobile_number) {
@@ -349,17 +373,22 @@ export default function CreateCouponPage() {
       bValidDays = 90
     }
 
-    const loyaltyCode = buildCouponCode(sequenceNumber, form.invoice_number, 'LOYALTY', plate)
-    const referralCode = buildCouponCode(sequenceNumber, form.invoice_number, 'REFERRAL', plate)
+    const isReceptionistFlow = profile.user_role === 'RECEPTIONIST' && RECEPTIONIST_COUPON_CREATION_ENABLED
+    const submissionInvoice = isReceptionistFlow ? 'REC' : form.invoice_number
+
+    const loyaltyCode = buildCouponCode(sequenceNumber, submissionInvoice, 'LOYALTY', plate)
+    const referralCode = buildCouponCode(sequenceNumber, submissionInvoice, 'REFERRAL', plate)
+
+    const selectedAdvisor = isReceptionistFlow ? advisors.find(a => a.id === form.advisor_id) : null
 
     const baseFields = {
       offer_id: selectedOffer.id,
       offer_title: selectedOffer.title,
       offer_identifier: selectedOffer.offer_identifier,
       issued_by: profile.id,
-      advisor_name: profile.full_name,
-      advisor_code: profile.advisor_code,
-      invoice_number: form.invoice_number.toUpperCase(),
+      advisor_name: isReceptionistFlow ? (selectedAdvisor?.full_name || '') : (profile.full_name || ''),
+      advisor_code: isReceptionistFlow ? (selectedAdvisor?.advisor_code || '') : (profile.advisor_code || ''),
+      invoice_number: submissionInvoice.toUpperCase(),
       sequence_number: sequenceNumber,
       plate_number: form.plate_number,
       plate_category: form.plate_category,
@@ -369,6 +398,7 @@ export default function CreateCouponPage() {
       issue_date: issueDateStr,
       status: 'ACTIVE',
       redemption_count: 0,
+      ...(isReceptionistFlow ? { created_by_receptionist: true } : {})
     }
 
     const { data: mData, error: mError } = await supabase
@@ -405,7 +435,7 @@ export default function CreateCouponPage() {
 
   function resetForm() {
     setSuccess(null)
-    setForm({ offer_id: '', invoice_number: 'I', mobile_number: '', emirate: '', plate_category: '', plate_number: '' })
+    setForm({ offer_id: '', invoice_number: 'I', mobile_number: '', emirate: '', plate_category: '', plate_number: '', advisor_id: '' })
     setErrors({})
   }
 
@@ -436,7 +466,10 @@ export default function CreateCouponPage() {
     )
   }
 
-  const canPreview = !!(selectedOffer && form.invoice_number && validateInvoiceNumber(form.invoice_number) && form.emirate && form.plate_category && form.plate_number)
+  const isReceptionistFlow = profile?.user_role === 'RECEPTIONIST' && RECEPTIONIST_COUPON_CREATION_ENABLED
+  const previewInvoice = isReceptionistFlow ? 'REC' : form.invoice_number
+
+  const canPreview = !!(selectedOffer && (isReceptionistFlow || (form.invoice_number && validateInvoiceNumber(form.invoice_number))) && form.emirate && form.plate_category && form.plate_number)
   const previewPlate = canPreview ? `${selectedEmirate?.code || form.emirate}${form.plate_category}${form.plate_number}`.toUpperCase() : ''
 
   return (
@@ -494,34 +527,50 @@ export default function CreateCouponPage() {
             {errors.offer_id && <p style={errorStyle}>{errors.offer_id}</p>}
           </div>
 
-          <div>
-            <label style={labelStyle}>Invoice Number *</label>
-            <input style={{ ...inputStyle, ...(errors.invoice_number ? errorBorderStyle : {}) }}
-              value={form.invoice_number}
-              onChange={e => {
-                // Strip everything except alphanumeric — no special chars, no HTML, no scripts
-                let val = e.target.value.replace(/[^A-Za-z0-9]/g, '').toUpperCase()
-                // Enforce max total length early to prevent large input attacks
-                val = val.slice(0, 7)
-                // First character must be 'I' — enforce it
-                if (val.length === 0) {
-                  setForm(f => ({ ...f, invoice_number: 'I' }))
-                  return
-                }
-                if (val[0] !== 'I') {
-                  val = 'I' + val.replace(/[^0-9]/g, '').slice(0, 6)
-                } else {
-                  // First char is I — rest must be digits only, max 6
-                  const digits = val.slice(1).replace(/\D/g, '').slice(0, 6)
-                  val = 'I' + digits
-                }
-                if (val.length === 0) val = 'I'
-                setForm(f => ({ ...f, invoice_number: val }))
-              }}
-              placeholder="e.g. I123456" maxLength={7} />
-            {errors.invoice_number && <p style={errorStyle}>{errors.invoice_number}</p>}
-            <p style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>Must start with "I" followed by up to 6 digits.</p>
-          </div>
+          {isReceptionistFlow ? (
+            <div>
+              <label style={labelStyle}>Service Advisor *</label>
+              <select style={{ ...inputStyle, ...(errors.advisor_id ? errorBorderStyle : {}) }}
+                value={form.advisor_id} onChange={e => setForm(f => ({ ...f, advisor_id: e.target.value }))}>
+                <option value="">Select a Service Advisor...</option>
+                {advisors.map(adv => (
+                  <option key={adv.id} value={adv.id}>
+                    {adv.full_name} {adv.advisor_code ? `(${adv.advisor_code})` : ''}
+                  </option>
+                ))}
+              </select>
+              {errors.advisor_id && <p style={errorStyle}>{errors.advisor_id}</p>}
+            </div>
+          ) : (
+            <div>
+              <label style={labelStyle}>Invoice Number *</label>
+              <input style={{ ...inputStyle, ...(errors.invoice_number ? errorBorderStyle : {}) }}
+                value={form.invoice_number}
+                onChange={e => {
+                  // Strip everything except alphanumeric — no special chars, no HTML, no scripts
+                  let val = e.target.value.replace(/[^A-Za-z0-9]/g, '').toUpperCase()
+                  // Enforce max total length early to prevent large input attacks
+                  val = val.slice(0, 7)
+                  // First character must be 'I' — enforce it
+                  if (val.length === 0) {
+                    setForm(f => ({ ...f, invoice_number: 'I' }))
+                    return
+                  }
+                  if (val[0] !== 'I') {
+                    val = 'I' + val.replace(/[^0-9]/g, '').slice(0, 6)
+                  } else {
+                    // First char is I — rest must be digits only, max 6
+                    const digits = val.slice(1).replace(/\D/g, '').slice(0, 6)
+                    val = 'I' + digits
+                  }
+                  if (val.length === 0) val = 'I'
+                  setForm(f => ({ ...f, invoice_number: val }))
+                }}
+                placeholder="e.g. I123456" maxLength={7} />
+              {errors.invoice_number && <p style={errorStyle}>{errors.invoice_number}</p>}
+              <p style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>Must start with "I" followed by up to 6 digits.</p>
+            </div>
+          )}
 
           <div style={{ backgroundColor: '#F7F9FF', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px', border: '1px solid #E0E8FF' }}>
             <p style={{ fontSize: '13px', fontWeight: '600', color: '#162860', margin: 0 }}>{(selectedOffer?.loyalty_brand || 'Loyalty') + ' Plate'}</p>
@@ -594,11 +643,11 @@ export default function CreateCouponPage() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', backgroundColor: '#162860', color: '#FFFFFF', borderRadius: '4px', flexShrink: 0 }}>{selectedOffer.loyalty_code || 'M'}</span>
-                  <code style={{ fontSize: '12px', fontWeight: '700', color: '#162860', wordBreak: 'break-all' }}>???_{form.invoice_number.toUpperCase()}_{selectedOffer.loyalty_campaign_code || 'ALMARAGHI'}_{selectedOffer.loyalty_code || 'M'}_{previewPlate}</code>
+                  <code style={{ fontSize: '12px', fontWeight: '700', color: '#162860', wordBreak: 'break-all' }}>???_{previewInvoice.toUpperCase()}_{selectedOffer.loyalty_campaign_code || 'ALMARAGHI'}_{selectedOffer.loyalty_code || 'M'}_{previewPlate}</code>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 8px', backgroundColor: '#0074BD', color: '#FFFFFF', borderRadius: '4px', flexShrink: 0 }}>{selectedOffer.referral_code || 'B'}</span>
-                  <code style={{ fontSize: '12px', fontWeight: '700', color: '#0074BD', wordBreak: 'break-all' }}>???_{form.invoice_number.toUpperCase()}_{selectedOffer.referral_campaign_code || 'AUTOVERSA'}_{selectedOffer.referral_code || 'B'}_{previewPlate}</code>
+                  <code style={{ fontSize: '12px', fontWeight: '700', color: '#0074BD', wordBreak: 'break-all' }}>???_{previewInvoice.toUpperCase()}_{selectedOffer.referral_campaign_code || 'AUTOVERSA'}_{selectedOffer.referral_code || 'B'}_{previewPlate}</code>
                 </div>
               </div>
               <p style={{ fontSize: '11px', color: '#888', margin: '10px 0 0' }}>Sequence number (???) assigned on submission.</p>

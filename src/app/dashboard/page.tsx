@@ -10,6 +10,10 @@ import PageSkeleton from '@/components/layout/PageSkeleton'
 import { maskMobileNumber } from '@/lib/utils'
 import InvoiceEntryDialog from '@/components/dashboard/InvoiceEntryDialog'
 import { getLeaderboard, getAllAdvisorsMissingStatus, type LeaderboardRow } from '@/lib/invoiceTracking'
+import { RECEPTIONIST_COUPON_CREATION_ENABLED } from '@/lib/featureFlags'
+
+const RECEPTIONIST_COMMISSION_CARD_ENABLED = false // toggle back to true to re-enable this card
+
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -94,6 +98,56 @@ function hexToRgbStr(hex: string): string {
     return '0, 116, 189' // Default fallback
   }
   return `${r}, ${g}, ${b}`
+}
+
+// Shared helper to compute scoped coupon stats
+async function computeScopedCouponStats(supabase: any, query: any) {
+  const { data: coupons, error } = await query
+
+  const stats = {
+    customersServed: 0,
+    couponsIssued: 0,
+    referralVisits: 0,
+    redeemed: 0,
+    issuedToday: 0
+  }
+
+  if (error || !coupons) {
+    return stats
+  }
+
+  stats.couponsIssued = coupons.length
+
+  const todayStr = new Date().toISOString().split('T')[0]
+  const referralIds: string[] = []
+
+  coupons.forEach((c: any) => {
+    if (c.coupon_type === 'LOYALTY') {
+      stats.customersServed++
+      if (c.status === 'REDEEMED') {
+        stats.redeemed++
+      }
+      if (c.issue_date && c.issue_date.startsWith(todayStr)) {
+        stats.issuedToday++
+      }
+    } else if (c.coupon_type === 'REFERRAL') {
+      referralIds.push(c.id)
+    }
+  })
+
+  if (referralIds.length > 0) {
+    const { data: appointments, error: apptError } = await supabase
+      .from('appointments')
+      .select('coupon_id')
+      .in('coupon_id', referralIds)
+      .eq('status', 'visited')
+
+    if (!apptError && appointments) {
+      stats.referralVisits = appointments.length
+    }
+  }
+
+  return stats
 }
 
 // ─── Pagination component ─────────────────────────────────────────────────────
@@ -208,6 +262,16 @@ function StatCard({ label, value, color, loading, format = 'number', subtitle, i
   )
 }
 
+function SectionDivider({ label }: { label: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '40px 0 32px' }}>
+      <div style={{ flex: 1, height: '1px', backgroundColor: '#E0E0E0' }} />
+      <span style={{ fontSize: '11px', fontWeight: '700', color: '#888', textTransform: 'uppercase', letterSpacing: '0.08em', whiteSpace: 'nowrap' }}>{label}</span>
+      <div style={{ flex: 1, height: '1px', backgroundColor: '#E0E0E0' }} />
+    </div>
+  )
+}
+
 // ─── Recent coupon layout ───────────────────────────────────────────────────
 
 function RecentCouponRow({ coupon }: { coupon: any }) {
@@ -242,6 +306,35 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats>({ totalCoupons: 0, totalCouponRows: 0, redeemedCoupons: 0, todaysCoupons: 0, totalAdvisors: 0, referralVisits: 0 })
   const [recentCoupons, setRecentCoupons] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+
+  // Scoped stats for advisor & receptionist
+  const [advisorScopedStats, setAdvisorScopedStats] = useState({
+    customersServed: 0,
+    couponsIssued: 0,
+    referralVisits: 0,
+    redeemed: 0,
+    issuedToday: 0
+  })
+  const [receptionistScopedStats, setReceptionistScopedStats] = useState({
+    customersServed: 0,
+    couponsIssued: 0,
+    referralVisits: 0,
+    redeemed: 0,
+    issuedToday: 0
+  })
+
+  // Receptionist commission state
+  const [receptionistTotalCommission, setReceptionistTotalCommission] = useState(0)
+  const [receptionistTotalVisits, setReceptionistTotalVisits] = useState(0)
+  const [receptionistCommissionLoading, setReceptionistCommissionLoading] = useState(true)
+
+  // Receptionist pipeline state
+  const [receptionistOfferGroups, setReceptionistOfferGroups] = useState<OfferGroup[]>([])
+  const [receptionistStagesByOffer, setReceptionistStagesByOffer] = useState<Record<string, any[]>>({})
+  const [receptionistBrandsByOffer, setReceptionistBrandsByOffer] = useState<Record<string, { loyalty_brand: string | null; referral_brand: string | null }>>({})
+  const [receptionistPipelineLoading, setReceptionistPipelineLoading] = useState(true)
+  const [receptionistPipelineSearch, setReceptionistPipelineSearch] = useState('')
+  const [receptionistPipelinePages, setReceptionistPipelinePages] = useState<Record<string, number>>({})
 
   // Shared loyalty coupon data (receptionist + admin loyalty section)
   const [offerGroups, setOfferGroups] = useState<OfferGroup[]>([])
@@ -344,7 +437,7 @@ export default function DashboardPage() {
     const isAdmin = role === 'ADMIN'
     const isReceptionist = role === 'RECEPTIONIST'
 
-    if (isAdmin || isReceptionist) loadReceptionistData()
+    if (isAdmin || isReceptionist) loadReceptionistData(user.id)
 
     if (isAdmin) {
       const { data: advisors } = advisorsResult
@@ -352,7 +445,7 @@ export default function DashboardPage() {
       loadAdminPipeline('all')
     }
 
-    if (isAdvisor) loadAdvisorSelfData(user.id)
+    if (isAdvisor) loadAdvisorSelfData(user.id, profileData)
 
     // Load Advisor Leaderboard for everyone except Receptionist
     if (!isReceptionist) {
@@ -490,8 +583,12 @@ export default function DashboardPage() {
 
   // ─── Receptionist data loader ─────────────────────────────────────────────
 
-  async function loadReceptionistData() {
+  async function loadReceptionistData(currentUserId?: string) {
     setRLoading(true)
+    if (RECEPTIONIST_COUPON_CREATION_ENABLED) {
+      setReceptionistCommissionLoading(true)
+      setReceptionistPipelineLoading(true)
+    }
     try {
       const { data: coupons } = await supabase
         .from('coupons')
@@ -499,23 +596,95 @@ export default function DashboardPage() {
         .eq('coupon_type', 'LOYALTY').eq('status', 'ACTIVE')
         .order('offer_id').order('created_at', { ascending: false })
 
-      if (!coupons || coupons.length === 0) { setOfferGroups([]); return }
+      if (coupons && coupons.length > 0) {
+        const result = await buildLoyaltyGroups(coupons)
+        setOfferGroups(result.offerGroups)
+        setStagesByOffer(result.stagesByOffer)
+        setBrandsByOffer(result.brandsByOffer)
+      } else {
+        setOfferGroups([])
+      }
 
-      const result = await buildLoyaltyGroups(coupons)
-      setOfferGroups(result.offerGroups)
-      setStagesByOffer(result.stagesByOffer)
-      setBrandsByOffer(result.brandsByOffer)
+      if (RECEPTIONIST_COUPON_CREATION_ENABLED) {
+        const activeUserId = currentUserId || (await supabase.auth.getUser()).data.user?.id
+        if (activeUserId) {
+          const { data: splits, error } = await supabase
+            .from('coupon_commission_splits')
+            .select('receptionist_amount')
+            .eq('receptionist_id', activeUserId)
+
+          if (error) {
+            console.error('Error querying receptionist commission splits:', error)
+          } else if (splits) {
+            const sum = splits.reduce((acc, row) => acc + (row.receptionist_amount || 0), 0)
+            setReceptionistTotalCommission(sum)
+            setReceptionistTotalVisits(splits.length)
+          }
+
+          // Fetch receptionist's own issued loyalty coupons
+          const { data: receptionistCoupons } = await supabase
+            .from('coupons')
+            .select('id, coupon_code, plate_combined_string, mobile_number, advisor_name, issued_by, stage, stage_updated_at, offer_id, offer_title, last_notified_at')
+            .eq('coupon_type', 'LOYALTY')
+            .eq('issued_by', activeUserId)
+            .order('offer_id').order('created_at', { ascending: false })
+
+          if (receptionistCoupons && receptionistCoupons.length > 0) {
+            const result = await buildLoyaltyGroups(receptionistCoupons)
+            setReceptionistOfferGroups(result.offerGroups)
+            setReceptionistStagesByOffer(result.stagesByOffer)
+            setReceptionistBrandsByOffer(result.brandsByOffer)
+          } else {
+            setReceptionistOfferGroups([])
+            setReceptionistStagesByOffer({})
+            setReceptionistBrandsByOffer({})
+          }
+
+          // Build scope query: select id, coupon_type, status, issue_date, parent_coupon_id, filtered to .eq('issued_by', activeUserId) only
+          const receptionistScopeQuery = supabase
+            .from('coupons')
+            .select('id, coupon_type, status, issue_date, parent_coupon_id')
+            .eq('issued_by', activeUserId)
+
+          const receptionistStatsObj = await computeScopedCouponStats(supabase, receptionistScopeQuery)
+          setReceptionistScopedStats(receptionistStatsObj)
+        }
+      }
     } catch (e) {
       console.error('Receptionist data load error:', e)
       setOfferGroups([])
+      if (RECEPTIONIST_COUPON_CREATION_ENABLED) {
+        setReceptionistOfferGroups([])
+        setReceptionistStagesByOffer({})
+        setReceptionistBrandsByOffer({})
+      }
     } finally {
       setRLoading(false)
+      if (RECEPTIONIST_COUPON_CREATION_ENABLED) {
+        setReceptionistCommissionLoading(false)
+        setReceptionistPipelineLoading(false)
+      } else {
+        setReceptionistCommissionLoading(false)
+        setReceptionistPipelineLoading(false)
+        setReceptionistTotalCommission(0)
+        setReceptionistTotalVisits(0)
+        setReceptionistOfferGroups([])
+        setReceptionistStagesByOffer({})
+        setReceptionistBrandsByOffer({})
+        setReceptionistScopedStats({
+          customersServed: 0,
+          couponsIssued: 0,
+          referralVisits: 0,
+          redeemed: 0,
+          issuedToday: 0
+        })
+      }
     }
   }
 
   // ─── Advisor self data loader ─────────────────────────────────────────────
 
-  async function loadAdvisorSelfData(userId: string) {
+  async function loadAdvisorSelfData(userId: string, profileDataParam?: Profile | null) {
     setAdvisorLoading(true)
     try {
       const { data: coupons } = await supabase
@@ -525,53 +694,66 @@ export default function DashboardPage() {
         .eq('issued_by', userId)
         .order('offer_id').order('created_at', { ascending: false })
 
-      if (!coupons || coupons.length === 0) {
+      if (coupons && coupons.length > 0) {
+        const result = await buildLoyaltyGroups(coupons)
+        setAdvisorOfferGroups(result.offerGroups)
+        setAdvisorStagesByOffer(result.stagesByOffer)
+        setAdvisorBrandsByOffer(result.brandsByOffer)
+
+        // Compute total visits and commission for advisor KPIs
+        const loyaltyIds = coupons.map((c: any) => c.id)
+        const offerIds = Array.from(new Set(coupons.map((c: any) => c.offer_id).filter(Boolean))) as string[]
+
+        const [referralResult, offersResult] = await Promise.all([
+          supabase
+            .from('coupons').select('id, offer_id, parent_coupon_id')
+            .in('parent_coupon_id', loyaltyIds).eq('coupon_type', 'REFERRAL'),
+          offerIds.length > 0
+            ? supabase.from('offers').select('id, commission_amount').in('id', offerIds)
+            : Promise.resolve({ data: [] as any })
+        ])
+
+        const referralCoupons = referralResult.data
+        const offersData = offersResult.data
+
+        const referralIds = (referralCoupons || []).map((r: any) => r.id)
+        const { data: visitedAppts } = referralIds.length > 0
+          ? await supabase.from('appointments').select('coupon_id, offer_id').in('coupon_id', referralIds).eq('status', 'visited')
+          : { data: [] }
+
+        const commissionByOffer: Record<string, number> = {}
+        ;(offersData || []).forEach((o: any) => { commissionByOffer[o.id] = o.commission_amount || 0 })
+
+        const visitsPerOffer: Record<string, number> = {}
+        ;(visitedAppts || []).forEach((a: any) => {
+          if (a.offer_id) visitsPerOffer[a.offer_id] = (visitsPerOffer[a.offer_id] || 0) + 1
+        })
+
+        let totalCommission = 0
+        offerIds.forEach(oid => { totalCommission += (visitsPerOffer[oid] || 0) * (commissionByOffer[oid] || 0) })
+
+        setAdvisorTotalVisits((visitedAppts || []).length)
+        setAdvisorTotalCommission(totalCommission)
+      } else {
         setAdvisorTotalVisits(0)
         setAdvisorTotalCommission(0)
         setAdvisorOfferGroups([])
-        setAdvisorLoading(false)
-        return
       }
 
-      const result = await buildLoyaltyGroups(coupons)
-      setAdvisorOfferGroups(result.offerGroups)
-      setAdvisorStagesByOffer(result.stagesByOffer)
-      setAdvisorBrandsByOffer(result.brandsByOffer)
+      // Build the advisor's scope query on coupons
+      let scopeQuery = supabase
+        .from('coupons')
+        .select('id, coupon_type, status, issue_date, parent_coupon_id')
 
-      // Compute total visits and commission for advisor KPIs
-      const loyaltyIds = coupons.map((c: any) => c.id)
-      const offerIds = Array.from(new Set(coupons.map((c: any) => c.offer_id).filter(Boolean))) as string[]
+      const activeProfile = profileDataParam || profile
+      if (RECEPTIONIST_COUPON_CREATION_ENABLED && activeProfile?.advisor_code) {
+        scopeQuery = scopeQuery.or(`issued_by.eq.${userId},and(advisor_code.eq.${activeProfile.advisor_code},created_by_receptionist.eq.true)`)
+      } else {
+        scopeQuery = scopeQuery.eq('issued_by', userId)
+      }
 
-      const [referralResult, offersResult] = await Promise.all([
-        supabase
-          .from('coupons').select('id, offer_id, parent_coupon_id')
-          .in('parent_coupon_id', loyaltyIds).eq('coupon_type', 'REFERRAL'),
-        offerIds.length > 0
-          ? supabase.from('offers').select('id, commission_amount').in('id', offerIds)
-          : Promise.resolve({ data: [] as any })
-      ])
-
-      const referralCoupons = referralResult.data
-      const offersData = offersResult.data
-
-      const referralIds = (referralCoupons || []).map((r: any) => r.id)
-      const { data: visitedAppts } = referralIds.length > 0
-        ? await supabase.from('appointments').select('coupon_id, offer_id').in('coupon_id', referralIds).eq('status', 'visited')
-        : { data: [] }
-
-      const commissionByOffer: Record<string, number> = {}
-      ;(offersData || []).forEach((o: any) => { commissionByOffer[o.id] = o.commission_amount || 0 })
-
-      const visitsPerOffer: Record<string, number> = {}
-      ;(visitedAppts || []).forEach((a: any) => {
-        if (a.offer_id) visitsPerOffer[a.offer_id] = (visitsPerOffer[a.offer_id] || 0) + 1
-      })
-
-      let totalCommission = 0
-      offerIds.forEach(oid => { totalCommission += (visitsPerOffer[oid] || 0) * (commissionByOffer[oid] || 0) })
-
-      setAdvisorTotalVisits((visitedAppts || []).length)
-      setAdvisorTotalCommission(totalCommission)
+      const statsObj = await computeScopedCouponStats(supabase, scopeQuery)
+      setAdvisorScopedStats(statsObj)
 
     } catch (e) {
       console.error('Advisor self data error:', e)
@@ -733,7 +915,7 @@ export default function DashboardPage() {
 
     if (filtered.length === 0) {
       return (
-        <div style={{ textAlign: 'center', padding: '48px', backgroundColor: '#FFFFFF', borderRadius: '16px', color: '#666', fontSize: '14px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+        <div style={{ textAlign: 'center', padding: '48px', backgroundColor: '#FFFFFF', borderRadius: '16px', color: '#66', fontSize: '14px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
           {search
             ? 'No customers match your search.'
             : loyaltyTab === 'notify'
@@ -799,7 +981,7 @@ export default function DashboardPage() {
               <div style={{ backgroundColor: '#FFFFFF', borderRadius: '14px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', overflow: 'hidden' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: groupCols, padding: '10px 20px', backgroundColor: '#F7F7F7', borderBottom: '1px solid #EEEEEE' }}>
                   {groupHeaders.map(h => (
-                    <span key={h} style={{ fontSize: '11px', fontWeight: '700', color: '#666', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</span>
+                    <span key={h} style={{ fontSize: '11px', fontWeight: '700', color: '#66', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</span>
                   ))}
                 </div>
 
@@ -904,7 +1086,7 @@ export default function DashboardPage() {
 
     if (filtered.length === 0) {
       return (
-        <div style={{ textAlign: 'center', padding: '48px', backgroundColor: '#FFFFFF', borderRadius: '16px', color: '#666', fontSize: '14px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+        <div style={{ textAlign: 'center', padding: '48px', backgroundColor: '#FFFFFF', borderRadius: '16px', color: '#66', fontSize: '14px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
           {advisorSearch ? 'No coupons match your search.' : 'You have not issued any coupons yet.'}
           {!advisorSearch && (
             <div style={{ marginTop: '16px' }}>
@@ -965,7 +1147,7 @@ export default function DashboardPage() {
                     (advisorBrandsByOffer[group.offer_id]?.referral_brand || 'Referral') + ' Referrals',
                     'Stage Progress',
                   ].map(h => (
-                    <span key={h} style={{ fontSize: '11px', fontWeight: '700', color: '#666', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</span>
+                    <span key={h} style={{ fontSize: '11px', fontWeight: '700', color: '#66', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</span>
                   ))}
                 </div>
 
@@ -1071,7 +1253,7 @@ export default function DashboardPage() {
         <div style={{ overflowX: 'auto' }}>
           <div style={{ minWidth: '600px' }}>
             {/* Table headers */}
-            <div style={{ display: 'grid', gridTemplateColumns: '60px 2fr 1.2fr 1.2fr 2fr', padding: '10px 16px', backgroundColor: '#F7F7F7', borderRadius: '8px', borderBottom: '1px solid #EEEEEE', fontWeight: '700', fontSize: '11px', color: '#666', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '60px 2fr 1.2fr 1.2fr 2fr', padding: '10px 16px', backgroundColor: '#F7F7F7', borderRadius: '8px', borderBottom: '1px solid #EEEEEE', fontWeight: '700', fontSize: '11px', color: '#66', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
               <span>Rank</span>
               <span>Advisor Name</span>
               <span style={{ textAlign: 'right' }}>Invoices This Month</span>
@@ -1183,9 +1365,81 @@ export default function DashboardPage() {
         {styleEl}{toastEl}
         <Navbar />
         <main style={{ padding: '0 32px 48px' }}>
+          {RECEPTIONIST_COUPON_CREATION_ENABLED && (
+            <>
+              {/* Header */}
+              <div style={{ marginBottom: '28px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                  <h1 style={{ fontSize: '22px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>Good {getGreeting()}, {profile?.full_name?.split(' ')[0] || 'there'} 👋</h1>
+                </div>
+                <p style={{ color: '#666666', fontSize: '14px', marginTop: '6px' }}>
+                  {new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                </p>
+              </div>
+
+              {/* KPI cards */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '28px' }}>
+                <StatCard label="Customers Served" value={receptionistScopedStats.customersServed} color="#0074BD" loading={receptionistCommissionLoading} icon="👥" subtitle="Unique customers issued Mercedes coupons" />
+                <StatCard label="Coupons Issued" value={receptionistScopedStats.couponsIssued} color="#7c3aed" loading={receptionistCommissionLoading} icon="🎟️" subtitle={`${receptionistScopedStats.customersServed} Mercedes + ${receptionistScopedStats.customersServed} BMW`} />
+                <StatCard label="BMW Referral Visits" value={receptionistScopedStats.referralVisits} color="#16a34a" loading={receptionistCommissionLoading} icon="🚗" subtitle="BMW coupons redeemed at service" />
+                <StatCard label="Mercedes Redeemed" value={receptionistScopedStats.redeemed} color="#9333ea" loading={receptionistCommissionLoading} icon="✅" subtitle="Mercedes coupons marked redeemed" />
+                <StatCard label="Customers Issued Today" value={receptionistScopedStats.issuedToday} color="#f59e0b" loading={receptionistCommissionLoading} icon="📅" subtitle="Unique customers, not coupon rows" />
+                {RECEPTIONIST_COMMISSION_CARD_ENABLED && (
+                  <StatCard label="Commission Earned" value={receptionistTotalCommission} color="#f59e0b" format="currency" loading={receptionistCommissionLoading} />
+                )}
+              </div>
+
+              {/* Quick actions */}
+              <div style={{ display: 'flex', gap: '12px', marginBottom: '36px' }}>
+                <button
+                  onClick={() => router.push('/create-coupon')}
+                  style={{
+                    padding: '12px 24px',
+                    backgroundColor: '#0074BD',
+                    color: '#FFFFFF',
+                    border: 'none',
+                    borderRadius: '10px',
+                    fontSize: '14px',
+                    fontWeight: '600',
+                    cursor: 'pointer'
+                  }}
+                >
+                  + Create Coupon
+                </button>
+              </div>
+            </>
+          )}
+
+          {RECEPTIONIST_COUPON_CREATION_ENABLED && (
+            <>
+              {/* Loyalty pipeline */}
+              <SectionDivider label="Personal Pipeline" />
+              <div style={{ marginBottom: '20px', marginTop: '24px' }}>
+                <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>My Loyalty Coupon Pipeline</h2>
+                <p style={{ color: '#66', fontSize: '14px', marginTop: '4px' }}>Stage progress for your issued loyalty coupons, grouped by offer.</p>
+              </div>
+
+              <div style={{ marginBottom: '20px' }}>
+                <input value={receptionistPipelineSearch} onChange={e => setReceptionistPipelineSearch(e.target.value.replace(/[<>]/g, '').slice(0, 100))} placeholder="Search by plate or coupon code…"
+                  style={{ width: '100%', padding: '10px 14px', fontSize: '14px', border: '1.5px solid #E0E0E0', borderRadius: '10px', outline: 'none', backgroundColor: '#FFFFFF', color: '#1A1A1A', boxSizing: 'border-box' }} />
+              </div>
+
+              {receptionistPipelineLoading ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '36px' }}>
+                  {Array.from({ length: 2 }).map((_, i) => <div key={i} style={{ height: '180px', backgroundColor: '#F0F0F0', borderRadius: '14px', animation: 'pulse 1.5s ease-in-out infinite' }} />)}
+                </div>
+              ) : (
+                <div style={{ marginBottom: '36px' }}>
+                  {renderLoyaltyTable(receptionistOfferGroups, receptionistStagesByOffer, receptionistBrandsByOffer, receptionistPipelineSearch, receptionistPipelinePages, setReceptionistPipelinePages, false, false, false, 'all_eligible')}
+                </div>
+              )}
+            </>
+          )}
+
+          <SectionDivider label="Loyalty Rewards Dashboard" />
           <div style={{ marginBottom: '20px' }}>
             <h2 style={{ fontSize: '22px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>Loyalty Rewards Dashboard</h2>
-            <p style={{ color: '#666', fontSize: '14px', marginTop: '4px' }}>Loyalty customers eligible for rewards based on referral visits.</p>
+            <p style={{ color: '#66', fontSize: '14px', marginTop: '4px' }}>Loyalty customers eligible for rewards based on referral visits.</p>
           </div>
           <div style={{ display: 'flex', gap: '4px', marginBottom: '16px', backgroundColor: '#FFFFFF', padding: '5px', borderRadius: '10px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', width: 'fit-content' }}>
             {([
@@ -1245,8 +1499,12 @@ export default function DashboardPage() {
           </div>
 
           {/* KPI cards */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '28px' }}>
-            <StatCard label="Referral Visits" value={advisorTotalVisits} color="#16a34a" loading={advisorLoading} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '28px' }}>
+            <StatCard label="Customers Served" value={advisorScopedStats.customersServed} color="#0074BD" loading={advisorLoading} icon="👥" subtitle="Unique customers issued Mercedes coupons" />
+            <StatCard label="Coupons Issued" value={advisorScopedStats.couponsIssued} color="#7c3aed" loading={advisorLoading} icon="🎟️" subtitle={`${advisorScopedStats.customersServed} Mercedes + ${advisorScopedStats.customersServed} BMW`} />
+            <StatCard label="BMW Referral Visits" value={advisorScopedStats.referralVisits} color="#16a34a" loading={advisorLoading} icon="🚗" subtitle="BMW coupons redeemed at service" />
+            <StatCard label="Mercedes Redeemed" value={advisorScopedStats.redeemed} color="#9333ea" loading={advisorLoading} icon="✅" subtitle="Mercedes coupons marked redeemed" />
+            <StatCard label="Customers Issued Today" value={advisorScopedStats.issuedToday} color="#f59e0b" loading={advisorLoading} icon="📅" subtitle="Unique customers, not coupon rows" />
             <StatCard label="Commission Earned" value={advisorTotalCommission} color="#f59e0b" loading={advisorLoading} format="currency" />
           </div>
 
@@ -1266,7 +1524,7 @@ export default function DashboardPage() {
           {/* Loyalty pipeline */}
           <div style={{ marginBottom: '20px' }}>
             <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>My Loyalty Coupon Pipeline</h2>
-            <p style={{ color: '#666', fontSize: '14px', marginTop: '4px' }}>Stage progress for your issued loyalty coupons, grouped by offer.</p>
+            <p style={{ color: '#66', fontSize: '14px', marginTop: '4px' }}>Stage progress for your issued loyalty coupons, grouped by offer.</p>
           </div>
 
           <div style={{ marginBottom: '20px' }}>
@@ -1348,9 +1606,10 @@ export default function DashboardPage() {
         {/* Loyalty Rewards Dashboard */}
         {isAdmin && (
           <>
+            <SectionDivider label="Loyalty Rewards Dashboard" />
             <div style={{ marginBottom: '20px' }}>
               <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>Loyalty Rewards Dashboard</h2>
-              <p style={{ color: '#666', fontSize: '14px', marginTop: '4px' }}>Loyalty customers eligible for rewards based on referral visits.</p>
+              <p style={{ color: '#66', fontSize: '14px', marginTop: '4px' }}>Loyalty customers eligible for rewards based on referral visits.</p>
             </div>
             <div style={{ display: 'flex', gap: '4px', marginBottom: '16px', backgroundColor: '#FFFFFF', padding: '5px', borderRadius: '10px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', width: 'fit-content' }}>
               {([
@@ -1383,11 +1642,12 @@ export default function DashboardPage() {
             ) : renderLoyaltyTable(offerGroups, stagesByOffer, brandsByOffer, rSearch, receptionistPages, setReceptionistPages, true, false, true, loyaltyDashboardTab)}
 
             {/* Service Advisor Dashboard */}
+            <SectionDivider label="Service Advisor Dashboard" />
             <div style={{ marginTop: '48px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
                 <div>
                   <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>Service Advisor Dashboard</h2>
-                  <p style={{ color: '#666', fontSize: '14px', marginTop: '4px' }}>Coupon pipeline per advisor, grouped by offer.</p>
+                  <p style={{ color: '#66', fontSize: '14px', marginTop: '4px' }}>Coupon pipeline per advisor, grouped by offer.</p>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <label style={{ fontSize: '13px', fontWeight: '600', color: '#1A1A1A', whiteSpace: 'nowrap' }}>Viewing:</label>
@@ -1443,7 +1703,7 @@ export default function DashboardPage() {
                           boxShadow: `0 1px 6px rgba(${rgb}, 0.5)`,
                         }} />
 
-                        <p style={{ fontSize: '12px', color: '#666', fontWeight: '500', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: '3px' }}>{s.label}</p>
+                        <p style={{ fontSize: '12px', color: '#66', fontWeight: '500', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: '3px' }}>{s.label}</p>
                         <p style={{
                           fontSize: '28px',
                           fontWeight: '700',
@@ -1475,20 +1735,20 @@ export default function DashboardPage() {
             </div>
           </>
         )}
-        </main>
+      </main>
 
-        {/* Invoice Entry Dialog */}
-        {profile?.id && (
-          <InvoiceEntryDialog
-            isOpen={isInvoiceDialogOpen}
-            onClose={() => {
-              setIsInvoiceDialogOpen(false)
-              loadDashboard()
-            }}
-            currentUserId={profile.id}
-            currentUserRole={profile.user_role}
-          />
-        )}
-      </div>
-    )
-  }
+      {/* Invoice Entry Dialog */}
+      {profile?.id && (
+        <InvoiceEntryDialog
+          isOpen={isInvoiceDialogOpen}
+          onClose={() => {
+            setIsInvoiceDialogOpen(false)
+            loadDashboard()
+          }}
+          currentUserId={profile.id}
+          currentUserRole={profile.user_role}
+        />
+      )}
+    </div>
+  )
+}
