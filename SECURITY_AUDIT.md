@@ -3,7 +3,7 @@
 | Zone | Last Checked | Result |
 |---|---|---|
 | 1. Data Access & Permissions | 2026-07-09 | 3 critical, 3 warnings |
-| 2. Business Rule Integrity | 2026-06-24 | 3 warnings, 2 informational |
+| 2. Business Rule Integrity | 2026-07-10 | 3 warnings, 2 informational |
 | 3. Input Validation, Storage & Session Handling | 2026-07-06 | 1 critical, 2 warnings, 1 informational |
 
 ---
@@ -66,24 +66,24 @@
 - **Bypass of Coupon Expiry/Status Check on Redemption**:
   - **What's wrong**: Manual coupon redemption in `handleMarkRedeemed` directly updates the status to `REDEEMED` without re-querying the database to verify if the coupon is still active and has not expired.
   - **Why it matters**: Allows a user to redeem expired or already redeemed/cancelled coupons if a race condition occurs or if they construct a direct database update request.
-  - **Where**: [src/app/coupons/page.tsx:L439](file:///Users/fahim/autoversa-coupon-manager/src/app/coupons/page.tsx#L439)
-- **Blind Coupon Status Transition on Appointment Visited**:
-  - **What's wrong**: Marking an appointment as `visited` blindly updates the associated referral coupon's status to `REDEEMED` without verifying that the coupon's current status is `ACTIVE`.
-  - **Why it matters**: Can result in invalid status transitions, such as moving a `CANCELLED` or `EXPIRED` coupon to `REDEEMED`.
-  - **Where**: [src/app/appointments/page.tsx:L675-L676](file:///Users/fahim/autoversa-coupon-manager/src/app/appointments/page.tsx#L675-L676)
+  - **Where**: [src/app/coupons/page.tsx:L476](file:///Users/fahim/autoversa-coupon-manager/src/app/coupons/page.tsx#L476)
+- **Blind Coupon Status Transition on Cancellation**:
+  - **What's wrong**: Coupon cancellation directly updates the status to `CANCELLED` without verifying if the coupon was `ACTIVE` in the database.
+  - **Why it matters**: Allows a user to transition a `REDEEMED` or `EXPIRED` coupon to `CANCELLED`, violating the allowed status transitions.
+  - **Where**: [src/app/coupons/page.tsx:L1155](file:///Users/fahim/autoversa-coupon-manager/src/app/coupons/page.tsx#L1155)
 - **UI-Only Enforcement of Offer Cap and Plate Uniqueness**:
-  - **What's wrong**: Offer cap checks and plate uniqueness rules (`[PlateOfferCheck]` and `[MercedesPlateCheck]`) are enforced only in application/UI code, lacking corresponding database-level CHECK constraints or triggers.
+  - **What's wrong**: Offer cap checks and plate uniqueness rules (`[PlateOfferCheck]` and `[MercedesPlateCheck]`) are enforced only in application/UI code, lacking corresponding database-level CHECK constraints, unique constraints, or triggers.
   - **Why it matters**: Malicious clients or direct database connections can bypass these rules, creating duplicate coupons or exceeding offer caps.
-  - **Where**: [src/app/create-coupon/page.tsx:L249-L281](file:///Users/fahim/autoversa-coupon-manager/src/app/create-coupon/page.tsx#L249-L281) (plate checks) and [src/app/appointments/page.tsx:L478-L492](file:///Users/fahim/autoversa-coupon-manager/src/app/appointments/page.tsx#L478-L492) (offer cap check)
+  - **Where**: [src/app/create-coupon/page.tsx:L296-L328](file:///Users/fahim/autoversa-coupon-manager/src/app/create-coupon/page.tsx#L296-L328) (plate checks) and [src/app/appointments/page.tsx:L491-L507](file:///Users/fahim/autoversa-coupon-manager/src/app/appointments/page.tsx#L491-L507) (offer cap check)
 
 ### Informational
 - **Missing API-Level Transition Verification for Appointments**:
   - **What's wrong**: The status update function `applyStatusUpdate` does not check if the requested transition is valid according to `getAvailableStatuses` on the server/DB side.
   - **Why it matters**: A client could bypass UI restrictions and update an appointment status to an invalid transition (e.g. going from `visited` back to `scheduled`).
-  - **Where**: [src/app/appointments/page.tsx:L605-L663](file:///Users/fahim/autoversa-coupon-manager/src/app/appointments/page.tsx#L605-L663)
+  - **Where**: [src/app/appointments/page.tsx:L620-L685](file:///Users/fahim/autoversa-coupon-manager/src/app/appointments/page.tsx#L620-L685)
 - **Sequential Number Generation check**:
-  - **Status**: Nothing to report. Sequential coupon numbers are generated using the database RPC `increment_coupon_sequence`, and appointment numbers are generated database-side. Neither relies on stale client-side states.
-  - **Where**: [src/app/create-coupon/page.tsx:L284](file:///Users/fahim/autoversa-coupon-manager/src/app/create-coupon/page.tsx#L284)
+  - **Status**: Nothing to report. Sequential coupon numbers are generated using the database RPC `increment_coupon_sequence` and appointment numbers are generated database-side.
+  - **Where**: [src/app/create-coupon/page.tsx:L331](file:///Users/fahim/autoversa-coupon-manager/src/app/create-coupon/page.tsx#L331)
 
 ## Zone 3 — Input Validation, Storage & Session Handling
 

@@ -9,6 +9,7 @@ import Navbar from '@/components/layout/Navbar'
 import Breadcrumb from '@/components/layout/Breadcrumb'
 import PageSkeleton from '@/components/layout/PageSkeleton'
 import { loadPermissionsForRole, checkPermission } from '@/lib/permissions'
+import ExportButton from '@/components/shared/ExportButton'
 
 
 interface Coupon {
@@ -535,12 +536,24 @@ export default function CouponsPage() {
             </p>
           </div>
           {pageTab === 'my_coupons' && (
-            <button
-              onClick={() => router.push('/create-coupon')}
-              style={{ padding: '10px 20px', backgroundColor: '#0074BD', color: '#FFFFFF', border: 'none', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}
-            >
-              + Create Coupon
-            </button>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <ExportButton
+                userRole={profile?.user_role}
+                exportUrl={`/api/export/coupons?${new URLSearchParams({
+                  type: filterType,
+                  status: filterStatus,
+                  offer: filterOffer,
+                  dateFrom: filterDateFrom,
+                  dateTo: filterDateTo,
+                }).toString()}`}
+              />
+              <button
+                onClick={() => router.push('/create-coupon')}
+                style={{ padding: '10px 20px', backgroundColor: '#0074BD', color: '#FFFFFF', border: 'none', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}
+              >
+                + Create Coupon
+              </button>
+            </div>
           )}
         </div>
 

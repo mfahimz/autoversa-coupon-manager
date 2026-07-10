@@ -10,9 +10,10 @@ import Breadcrumb from '@/components/layout/Breadcrumb'
 import PageSkeleton from '@/components/layout/PageSkeleton'
 import { loadPermissionsForRole, checkPermission } from '@/lib/permissions'
 import { RECEPTIONIST_COUPON_CREATION_ENABLED } from '@/lib/featureFlags'
+import ExportButton from '@/components/shared/ExportButton'
 
 import {
-    BarChart, Bar, LineChart, Line,
+    BarChart, Bar, LineChart, Line, ComposedChart,
     XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts'
 
@@ -110,6 +111,7 @@ export default function OfferReportPage() {
     const supabase = createClient()
 
     const [offer, setOffer] = useState<Offer | null>(null)
+    const [userRole, setUserRole] = useState<string | null>(null)
     const [coupons, setCoupons] = useState<Coupon[]>([])
     const [appointments, setAppointments] = useState<Appointment[]>([])
     const [loading, setLoading] = useState(true)
@@ -183,6 +185,8 @@ export default function OfferReportPage() {
             router.push('/dashboard')
             return
         }
+
+        setUserRole(profileData.user_role)
 
         if (stagesData) setOfferStages(stagesData)
 
@@ -349,20 +353,26 @@ export default function OfferReportPage() {
         }))
     }, [filteredCoupons, effectiveGranularity])
 
-    // Appointments over time
+    // Appointments over time (with cumulative commission)
     const apptChart = useMemo(() => {
         const visitedMap = groupByPeriod(
             visited.filter(a => a.appointment_date !== null).map(a => ({ date: a.appointment_date as string })),
             effectiveGranularity
         )
         const allKeys = Object.keys(visitedMap).sort()
-        return allKeys.map(k => ({
-            date: effectiveGranularity === 'weekly'
-                ? `Wk ${new Date(k).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}`
-                : new Date(k).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }),
-            Visited: visitedMap[k] || 0,
-        }))
-    }, [filteredAppts, effectiveGranularity])
+        let cumulativeCommission = 0
+        return allKeys.map(k => {
+            const periodVisits = visitedMap[k] || 0
+            cumulativeCommission += periodVisits * (offer?.commission_amount || 0)
+            return {
+                date: effectiveGranularity === 'weekly'
+                    ? `Wk ${new Date(k).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}`
+                    : new Date(k).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+                Visited: periodVisits,
+                CumulativeCommission: cumulativeCommission,
+            }
+        })
+    }, [filteredAppts, effectiveGranularity, offer])
 
     // Sub-offer breakdown
     const subOfferBreakdown = useMemo(() => {
@@ -505,7 +515,7 @@ export default function OfferReportPage() {
                         <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
                             style={{ padding: '7px 10px', fontSize: '13px', border: '1.5px solid #E0E0E0', borderRadius: '8px', outline: 'none' }} />
                     </div>
-                    <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto' }}>
+                    <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto', alignItems: 'center' }}>
                         {(['auto', 'daily', 'weekly'] as const).map(g => (
                             <button key={g} onClick={() => setGranularity(g)} style={{
                                 padding: '6px 12px', fontSize: '12px', fontWeight: '600', border: 'none', borderRadius: '7px', cursor: 'pointer',
@@ -515,6 +525,10 @@ export default function OfferReportPage() {
                                 {g.charAt(0).toUpperCase() + g.slice(1)}
                             </button>
                         ))}
+                        <ExportButton
+                            userRole={userRole}
+                            exportUrl={`/api/export/reporting/${offerId}?${new URLSearchParams({ dateFrom, dateTo }).toString()}`}
+                        />
                     </div>
                 </div>
 
@@ -589,21 +603,25 @@ export default function OfferReportPage() {
                         )}
                     </div>
 
-                    {/* Visits over time */}
+                    {/* Visits over time + cumulative commission */}
                     <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
                         <h3 style={{ fontSize: '14px', fontWeight: '700', color: '#1A1A1A', margin: '0 0 4px' }}>{(offer.referral_brand || 'Referral') + ' Invoiced Over Time'}</h3>
-                        <p style={{ fontSize: '12px', color: '#888', margin: '0 0 16px' }}>Completed invoices per {effectiveGranularity === 'weekly' ? 'week' : 'day'}</p>
+                        <p style={{ fontSize: '12px', color: '#888', margin: '0 0 16px' }}>Completed invoices and cumulative commission per {effectiveGranularity === 'weekly' ? 'week' : 'day'}</p>
                         {apptChart.length === 0 ? (
                             <div style={{ textAlign: 'center', padding: '40px', color: '#888', fontSize: '13px' }}>No visits in selected range</div>
                         ) : (
                             <ResponsiveContainer width="100%" height={220}>
-                                <LineChart data={apptChart} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                                <ComposedChart data={apptChart} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
                                     <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F0" />
                                     <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#888' }} />
-                                    <YAxis tick={{ fontSize: 11, fill: '#888' }} allowDecimals={false} />
-                                    <Tooltip contentStyle={{ fontSize: '12px', borderRadius: '8px', border: '1px solid #E0E0E0' }} />
-                                    <Line dataKey="Visited" name="Visits" stroke="#16a34a" strokeWidth={2} dot={{ r: 3 }} />
-                                </LineChart>
+                                    <YAxis yAxisId="left" tick={{ fontSize: 11, fill: '#888' }} allowDecimals={false} />
+                                    <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11, fill: '#888' }} tickFormatter={(v) => `AED ${v}`} />
+                                    <Tooltip contentStyle={{ fontSize: '12px', borderRadius: '8px', border: '1px solid #E0E0E0' }}
+                                        formatter={(v: any, name: string) => name === 'Cumulative Commission' ? [`AED ${Number(v).toLocaleString()}`, name] : [v, name]} />
+                                    <Legend wrapperStyle={{ fontSize: '12px' }} />
+                                    <Bar yAxisId="left" dataKey="Visited" name="Visits" fill="#16a34a" radius={[3, 3, 0, 0]} />
+                                    <Line yAxisId="right" dataKey="CumulativeCommission" name="Cumulative Commission" stroke="#f59e0b" strokeWidth={2} dot={{ r: 3 }} />
+                                </ComposedChart>
                             </ResponsiveContainer>
                         )}
                     </div>

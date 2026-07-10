@@ -11,6 +11,7 @@ import { maskMobileNumber } from '@/lib/utils'
 import InvoiceEntryDialog from '@/components/dashboard/InvoiceEntryDialog'
 import { getLeaderboard, getAllAdvisorsMissingStatus, type LeaderboardRow } from '@/lib/invoiceTracking'
 import { RECEPTIONIST_COUPON_CREATION_ENABLED } from '@/lib/featureFlags'
+import ExportButton from '@/components/shared/ExportButton'
 
 const RECEPTIONIST_COMMISSION_CARD_ENABLED = false // toggle back to true to re-enable this card
 
@@ -1248,6 +1249,7 @@ export default function DashboardPage() {
           <span style={{ fontSize: '18px' }}>🏆</span>
           <h3 style={{ fontSize: '14px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>Advisor Leaderboard</h3>
           <span style={{ fontSize: '12px', color: '#888', marginLeft: 'auto' }}>Invoice Match Score (%)</span>
+          <ExportButton userRole={profile?.user_role} exportUrl="/api/export/leaderboard" />
         </div>
 
         <div style={{ overflowX: 'auto' }}>
@@ -1413,9 +1415,9 @@ export default function DashboardPage() {
           {RECEPTIONIST_COUPON_CREATION_ENABLED && (
             <>
               {/* Loyalty pipeline */}
-              <SectionDivider label="Personal Pipeline" />
+              <SectionDivider label="Personal Overview" />
               <div style={{ marginBottom: '20px', marginTop: '24px' }}>
-                <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>My Loyalty Coupon Pipeline</h2>
+                <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>My Loyalty Coupon Overview</h2>
                 <p style={{ color: '#66', fontSize: '14px', marginTop: '4px' }}>Stage progress for your issued loyalty coupons, grouped by offer.</p>
               </div>
 
@@ -1523,7 +1525,7 @@ export default function DashboardPage() {
 
           {/* Loyalty pipeline */}
           <div style={{ marginBottom: '20px' }}>
-            <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>My Loyalty Coupon Pipeline</h2>
+            <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>My Loyalty Coupon Overview</h2>
             <p style={{ color: '#66', fontSize: '14px', marginTop: '4px' }}>Stage progress for your issued loyalty coupons, grouped by offer.</p>
           </div>
 
