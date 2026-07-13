@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/layout/Navbar'
 import Breadcrumb from '@/components/layout/Breadcrumb'
 import { loadPermissionsForRole, checkPermission } from '@/lib/permissions'
+import { toast } from 'sonner'
 import { RECEPTIONIST_COUPON_CREATION_ENABLED } from '@/lib/featureFlags'
 
 
@@ -135,7 +136,6 @@ export default function CreateCouponPage() {
   const [advisors, setAdvisors] = useState<Profile[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [success, setSuccess] = useState<{ coupons: any[]; sequenceNumber: number } | null>(null)
 
   const [form, setForm] = useState({
@@ -202,8 +202,8 @@ export default function CreateCouponPage() {
 
   // ─── Toast helper ───────────────────────────────────────────────────────────
   function showToast(message: string, type: 'success' | 'error' = 'success') {
-    setToast({ message, type })
-    setTimeout(() => setToast(null), 4000)
+    if (type === 'success') toast.success(message)
+    else toast.error(message)
   }
 
   function validateInvoiceNumber(val: string) {
@@ -478,17 +478,6 @@ export default function CreateCouponPage() {
         input:focus, select:focus { border-color: #0074BD !important; outline: none; }
       `}</style>
 
-      {toast && (
-        <div style={{
-          position: 'fixed', top: '24px', right: '24px', zIndex: 1000,
-          backgroundColor: toast.type === 'success' ? '#162860' : '#D0021B',
-          color: '#FFFFFF', padding: '14px 20px', borderRadius: '12px',
-          fontSize: '14px', fontWeight: '500', boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
-          animation: 'slideIn 0.2s ease',
-        }}>
-          {toast.message}
-        </div>
-      )}
 
       <Navbar />
 

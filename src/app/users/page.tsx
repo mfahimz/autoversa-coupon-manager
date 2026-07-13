@@ -9,6 +9,7 @@ import Navbar from '@/components/layout/Navbar'
 import Breadcrumb from '@/components/layout/Breadcrumb'
 import PageSkeleton from '@/components/layout/PageSkeleton'
 import { loadPermissionsForRole, checkPermission, PERMISSIONS_REGISTRY } from '@/lib/permissions'
+import { toast } from 'sonner'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -119,7 +120,6 @@ export default function UsersPage() {
   const [users, setUsers] = useState<UserProfile[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<string | null>(null)
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [currentPage, setCurrentPage] = useState(1)
 
@@ -142,8 +142,8 @@ export default function UsersPage() {
   }, [tab])
 
   function showToast(message: string, type: 'success' | 'error' = 'success') {
-    setToast({ message, type })
-    setTimeout(() => setToast(null), 3500)
+    if (type === 'success') toast.success(message)
+    else toast.error(message)
   }
 
   async function init() {
@@ -311,11 +311,6 @@ export default function UsersPage() {
         .perm-action:hover { background-color: #F9FBFF !important; }
       `}</style>
 
-      {toast && (
-        <div style={{ position: 'fixed', top: '24px', right: '24px', zIndex: 2000, backgroundColor: toast.type === 'success' ? '#162860' : '#D0021B', color: '#FFFFFF', padding: '14px 20px', borderRadius: '12px', fontSize: '14px', fontWeight: '500', boxShadow: '0 4px 16px rgba(0,0,0,0.2)', animation: 'slideIn 0.2s ease' }}>
-          {toast.message}
-        </div>
-      )}
 
       <Navbar />
 

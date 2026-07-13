@@ -9,6 +9,7 @@ import Navbar from '@/components/layout/Navbar'
 import Breadcrumb from '@/components/layout/Breadcrumb'
 import PageSkeleton from '@/components/layout/PageSkeleton'
 import { loadPermissionsForRole, checkPermission } from '@/lib/permissions'
+import { toast } from 'sonner'
 import ExportButton from '@/components/shared/ExportButton'
 
 
@@ -142,8 +143,6 @@ export default function CouponsPage() {
   const [redeemLoading, setRedeemLoading] = useState(false)
   const [redeemDone, setRedeemDone] = useState(false)
 
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
-
   // CHANGE 1: state variables
   const [filterType, setFilterType] = useState<'all' | 'LOYALTY' | 'REFERRAL'>('all')
   const [filterStatus, setFilterStatus] = useState<'all' | 'ACTIVE' | 'REDEEMED' | 'EXPIRED' | 'CANCELLED'>('all')
@@ -166,8 +165,8 @@ export default function CouponsPage() {
   useEffect(() => { setCurrentPage(1) }, [search, filterType, filterStatus, filterOffer, filterDateFrom, filterDateTo, kpiTab])
 
   function showToast(message: string, type: 'success' | 'error' = 'success') {
-    setToast({ message, type })
-    setTimeout(() => setToast(null), 3500)
+    if (type === 'success') toast.success(message)
+    else toast.error(message)
   }
 
   async function loadData() {
@@ -533,17 +532,6 @@ export default function CouponsPage() {
         .coupon-row:hover { background-color: #FAFBFF !important; }
       `}</style>
 
-      {toast && (
-        <div style={{
-          position: 'fixed', top: '24px', right: '24px', zIndex: 2000,
-          backgroundColor: toast.type === 'success' ? '#162860' : '#D0021B',
-          color: '#FFFFFF', padding: '14px 20px', borderRadius: '12px',
-          fontSize: '14px', fontWeight: '500', boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
-          animation: 'slideIn 0.2s ease',
-        }}>
-          {toast.message}
-        </div>
-      )}
 
       <Navbar />
 

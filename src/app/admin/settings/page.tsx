@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/layout/Navbar'
 import Breadcrumb from '@/components/layout/Breadcrumb'
 import { loadPermissionsForRole, checkPermission } from '@/lib/permissions'
+import { toast } from 'sonner'
 
 
 interface VariableConfig {
@@ -39,7 +40,6 @@ export default function AdminSettingsPage() {
     const [loadingEmirates, setLoadingEmirates] = useState(true)
     const [savingVar, setSavingVar] = useState<string | null>(null)
     const [savingEmirate, setSavingEmirate] = useState<string | null>(null)
-    const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
     const [showAddVarModal, setShowAddVarModal] = useState(false)
     const [newVar, setNewVar] = useState({ key: '', label: '', description: '' })
     const [adding, setAdding] = useState(false)
@@ -108,8 +108,8 @@ export default function AdminSettingsPage() {
     }
 
     function showToast(message: string, type: 'success' | 'error' = 'success') {
-        setToast({ message, type })
-        setTimeout(() => setToast(null), 3000)
+        if (type === 'success') toast.success(message)
+        else toast.error(message)
     }
 
     async function toggleVariable(variable: VariableConfig) {
@@ -267,17 +267,6 @@ export default function AdminSettingsPage() {
         input:focus { border-color: #0074BD !important; outline: none; }
       `}</style>
 
-            {toast && (
-                <div style={{
-                    position: 'fixed', top: '24px', right: '24px', zIndex: 1000,
-                    backgroundColor: toast.type === 'success' ? '#162860' : '#D0021B',
-                    color: '#FFFFFF', padding: '14px 20px', borderRadius: '12px',
-                    fontSize: '14px', fontWeight: '500', boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
-                    animation: 'slideIn 0.2s ease',
-                }}>
-                    {toast.message}
-                </div>
-            )}
 
             <Navbar />
 

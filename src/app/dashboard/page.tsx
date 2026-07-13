@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/layout/Navbar'
 import PageSkeleton from '@/components/layout/PageSkeleton'
+import { toast } from 'sonner'
 import { maskMobileNumber } from '@/lib/utils'
 import InvoiceEntryDialog from '@/components/dashboard/InvoiceEntryDialog'
 import { getLeaderboard, getAllAdvisorsMissingStatus, type LeaderboardRow } from '@/lib/invoiceTracking'
@@ -377,8 +378,6 @@ export default function DashboardPage() {
   const [leaderboardData, setLeaderboardData] = useState<LeaderboardRow[]>([])
   const [leaderboardLoading, setLeaderboardLoading] = useState(true)
 
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
-
   useEffect(() => { loadDashboard() }, [])
 
   // Auto-open logic for Admin / Manager once profile is loaded
@@ -397,8 +396,8 @@ export default function DashboardPage() {
   }, [profile, hasAutoOpened])
 
   function showToast(message: string, type: 'success' | 'error' = 'success') {
-    setToast({ message, type })
-    setTimeout(() => setToast(null), 3500)
+    if (type === 'success') toast.success(message)
+    else toast.error(message)
   }
 
   async function loadDashboard() {
@@ -1367,11 +1366,7 @@ export default function DashboardPage() {
 
   // ─── Toast + style ────────────────────────────────────────────────────────
 
-  const toastEl = toast && (
-    <div style={{ position: 'fixed', top: '24px', right: '24px', zIndex: 2000, backgroundColor: toast.type === 'success' ? '#162860' : '#D0021B', color: '#FFFFFF', padding: '14px 20px', borderRadius: '12px', fontSize: '14px', fontWeight: '500', boxShadow: '0 4px 16px rgba(0,0,0,0.2)', animation: 'slideIn 0.2s ease' }}>
-      {toast.message}
-    </div>
-  )
+  const toastEl = null
   const styleEl = <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } } @keyframes slideIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }`}</style>
 
   if (loading) return <PageSkeleton layout="stats-table" />

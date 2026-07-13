@@ -9,6 +9,7 @@ import Navbar from '@/components/layout/Navbar'
 import Breadcrumb from '@/components/layout/Breadcrumb'
 import PageSkeleton from '@/components/layout/PageSkeleton'
 import { loadPermissionsForRole, checkPermission } from '@/lib/permissions'
+import { toast } from 'sonner'
 
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -211,8 +212,6 @@ export default function AppointmentsPage() {
   const [jobCardSubOfferLoading, setJobCardSubOfferLoading] = useState(false)
   const [invoiceNumber, setInvoiceNumber] = useState('')
 
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
-
   const today = new Date().toISOString().split('T')[0]
 
   const searchParams = typeof window !== 'undefined'
@@ -278,8 +277,8 @@ export default function AppointmentsPage() {
   }
 
   function showToast(message: string, type: 'success' | 'error' = 'success') {
-    setToast({ message, type })
-    setTimeout(() => setToast(null), 3500)
+    if (type === 'success') toast.success(message)
+    else toast.error(message)
   }
 
   const stats = {
@@ -787,17 +786,6 @@ export default function AppointmentsPage() {
         .appt-row:hover { background-color: #F7F9FF !important; }
       `}</style>
 
-      {toast && (
-        <div style={{
-          position: 'fixed', top: '24px', right: '24px', zIndex: 2000,
-          backgroundColor: toast.type === 'success' ? '#162860' : '#D0021B',
-          color: '#FFFFFF', padding: '14px 20px', borderRadius: '12px',
-          fontSize: '14px', fontWeight: '500', boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
-          animation: 'slideIn 0.2s ease',
-        }}>
-          {toast.message}
-        </div>
-      )}
 
       <Navbar />
 
