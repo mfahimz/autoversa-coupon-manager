@@ -32,6 +32,7 @@ export default function AdminSettingsPage() {
     const supabase = createClient()
 
     const [pageLoading, setPageLoading] = useState(true)
+    const [userRole, setUserRole] = useState<string | null>(null)
     const [variables, setVariables] = useState<VariableConfig[]>([])
     const [emirates, setEmirates] = useState<EmirateConfig[]>([])
     const [loadingVars, setLoadingVars] = useState(true)
@@ -82,6 +83,7 @@ export default function AdminSettingsPage() {
             return
         }
 
+        setUserRole(profileData.user_role)
         setPageLoading(false)
     }
 
@@ -200,6 +202,47 @@ export default function AdminSettingsPage() {
         }
     }
 
+    async function addCategoryToEmirate(emirate: EmirateConfig, newCat: string, position?: number) {
+        const cat = newCat.trim().toUpperCase()
+        if (!cat) return
+        if (emirate.categories.includes(cat)) { showToast('Category already exists', 'error'); return }
+        const insertAt = position === undefined ? emirate.categories.length : Math.max(0, Math.min(position, emirate.categories.length))
+        const updated = [...emirate.categories]
+        updated.splice(insertAt, 0, cat)
+        const { error } = await supabase
+            .from('emirates_config')
+            .update({ categories: updated })
+            .eq('id', emirate.id)
+        if (error) showToast('Failed to add category', 'error')
+        else {
+            showToast(`${cat} added to ${emirate.name}`)
+            loadEmirates()
+        }
+    }
+
+    async function removeCategoryFromEmirate(emirate: EmirateConfig, catToRemove: string) {
+        if (emirate.categories.length <= 1) { showToast('At least one category is required', 'error'); return }
+        const updated = emirate.categories.filter(c => c !== catToRemove)
+        const { error } = await supabase
+            .from('emirates_config')
+            .update({ categories: updated })
+            .eq('id', emirate.id)
+        if (error) showToast('Failed to remove category', 'error')
+        else {
+            showToast(`${catToRemove} removed from ${emirate.name}`)
+            loadEmirates()
+        }
+    }
+
+    async function reorderEmirateCategories(emirate: EmirateConfig, newOrder: string[]) {
+        const { error } = await supabase
+            .from('emirates_config')
+            .update({ categories: newOrder })
+            .eq('id', emirate.id)
+        if (error) showToast('Failed to reorder categories', 'error')
+        else loadEmirates()
+    }
+
     if (pageLoading) {
         return (
             <div style={{ minHeight: '100vh', backgroundColor: '#F7F7F7', paddingTop: '16px' }}>
@@ -247,14 +290,15 @@ export default function AdminSettingsPage() {
 
                 <div style={{ marginBottom: '32px' }}>
                     <h1 style={{ fontSize: '22px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>
-                        Admin Settings
+                        {userRole === 'MANAGER' ? 'Plate Configuration' : 'Admin Settings'}
                     </h1>
                     <p style={{ color: '#666666', fontSize: '14px', marginTop: '4px' }}>
-                        Configure app behaviour without touching the codebase.
+                        {userRole === 'MANAGER' ? 'Manage emirates and plate category codes.' : 'Configure app behaviour without touching the codebase.'}
                     </p>
                 </div>
 
-                {/* Section 1 — Coupon Print Variables */}
+                {/* Section 1 — Coupon Print Variables (hidden for MANAGER) */}
+                {userRole !== 'MANAGER' && (
                 <div style={{
                     backgroundColor: '#FFFFFF', borderRadius: '16px',
                     boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
@@ -306,6 +350,7 @@ export default function AdminSettingsPage() {
                         ))
                     )}
                 </div>
+                )}
 
                 {/* Section 2 — Emirates Configuration */}
                 <div style={{
@@ -320,8 +365,9 @@ export default function AdminSettingsPage() {
                             Emirates & Plate Categories
                         </h2>
                         <p style={{ fontSize: '13px', color: '#666', marginTop: '4px' }}>
-                            Control which emirates appear in the coupon creation form and manage their
-                            plate category codes. Categories are comma-separated.
+                            {userRole === 'MANAGER'
+                              ? 'Manage plate category codes for each emirate. These control which options appear when creating coupons.'
+                              : 'Control which emirates appear in the coupon creation form and manage their plate category codes. Categories are comma-separated.'}
                         </p>
                     </div>
 
@@ -345,25 +391,36 @@ export default function AdminSettingsPage() {
                             >
                                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px' }}>
 
-                                    {/* Toggle */}
-                                    <div
-                                        onClick={() => toggleEmirate(emirate)}
-                                        style={{
-                                            width: '40px', height: '22px', borderRadius: '100px', flexShrink: 0,
-                                            backgroundColor: emirate.is_enabled ? '#0074BD' : '#CCCCCC',
-                                            cursor: savingEmirate === emirate.id ? 'not-allowed' : 'pointer',
-                                            position: 'relative', transition: 'background-color 0.2s',
-                                            marginTop: '2px',
-                                        }}
-                                    >
-                                        <div style={{
-                                            position: 'absolute', top: '2px',
-                                            left: emirate.is_enabled ? '20px' : '2px',
-                                            width: '18px', height: '18px', borderRadius: '50%',
-                                            backgroundColor: '#FFFFFF', transition: 'left 0.2s',
-                                            boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
-                                        }} />
-                                    </div>
+                                    {/* Toggle — hidden for MANAGER, view-only status dot shown instead */}
+                                    {userRole === 'MANAGER' ? (
+                                        <div
+                                            title={emirate.is_enabled ? 'Enabled' : 'Disabled'}
+                                            style={{
+                                                width: '10px', height: '10px', borderRadius: '50%', flexShrink: 0,
+                                                backgroundColor: emirate.is_enabled ? '#16a34a' : '#CCCCCC',
+                                                marginTop: '6px',
+                                            }}
+                                        />
+                                    ) : (
+                                        <div
+                                            onClick={() => toggleEmirate(emirate)}
+                                            style={{
+                                                width: '40px', height: '22px', borderRadius: '100px', flexShrink: 0,
+                                                backgroundColor: emirate.is_enabled ? '#0074BD' : '#CCCCCC',
+                                                cursor: savingEmirate === emirate.id ? 'not-allowed' : 'pointer',
+                                                position: 'relative', transition: 'background-color 0.2s',
+                                                marginTop: '2px',
+                                            }}
+                                        >
+                                            <div style={{
+                                                position: 'absolute', top: '2px',
+                                                left: emirate.is_enabled ? '20px' : '2px',
+                                                width: '18px', height: '18px', borderRadius: '50%',
+                                                backgroundColor: '#FFFFFF', transition: 'left 0.2s',
+                                                boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                                            }} />
+                                        </div>
+                                    )}
 
                                     {/* Emirate code badge */}
                                     <span style={{
@@ -381,72 +438,12 @@ export default function AdminSettingsPage() {
                                             {emirate.name}
                                         </p>
 
-                                        {editingEmirateId === emirate.id ? (
-                                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                                                <input
-                                                    value={editingCategories}
-                                                    onChange={e => {
-                                                        let val = e.target.value.replace(/[<>]/g, '');
-                                                        if (val.length > 100) val = val.slice(0, 100);
-                                                        setEditingCategories(val);
-                                                    }}
-                                                    onBlur={() => setEditingCategories(editingCategories.trim())}
-                                                    style={{
-                                                        flex: 1, minWidth: '200px', padding: '7px 10px',
-                                                        fontSize: '13px', fontFamily: 'monospace',
-                                                        border: '1.5px solid #0074BD', borderRadius: '8px',
-                                                        outline: 'none', color: '#1A1A1A',
-                                                    }}
-                                                    placeholder="e.g. A, B, C, D"
-                                                />
-                                                <button
-                                                    onClick={() => saveEmirateCategories(emirate)}
-                                                    style={{
-                                                        padding: '7px 14px', backgroundColor: '#0074BD', color: '#FFF',
-                                                        border: 'none', borderRadius: '8px', fontSize: '12px',
-                                                        fontWeight: '600', cursor: 'pointer',
-                                                    }}
-                                                >
-                                                    Save
-                                                </button>
-                                                <button
-                                                    onClick={() => setEditingEmirateId(null)}
-                                                    style={{
-                                                        padding: '7px 14px', backgroundColor: '#F0F0F0', color: '#444',
-                                                        border: 'none', borderRadius: '8px', fontSize: '12px',
-                                                        fontWeight: '600', cursor: 'pointer',
-                                                    }}
-                                                >
-                                                    Cancel
-                                                </button>
-                                            </div>
-                                        ) : (
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                                                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                                                    {emirate.categories.map(cat => (
-                                                        <span key={cat} style={{
-                                                            fontSize: '11px', fontFamily: 'monospace',
-                                                            backgroundColor: '#F0F0F0', color: '#444',
-                                                            padding: '2px 7px', borderRadius: '4px',
-                                                        }}>
-                                                            {cat}
-                                                        </span>
-                                                    ))}
-                                                </div>
-                                                <span
-                                                    onClick={() => {
-                                                        setEditingEmirateId(emirate.id)
-                                                        setEditingCategories(emirate.categories.join(', '))
-                                                    }}
-                                                    style={{
-                                                        fontSize: '11px', color: '#0074BD',
-                                                        cursor: 'pointer', fontWeight: '500',
-                                                    }}
-                                                >
-                                                    edit categories
-                                                </span>
-                                            </div>
-                                        )}
+                                        <EmirateCategoryEditor
+                                            emirate={emirate}
+                                            onAdd={(cat, position) => addCategoryToEmirate(emirate, cat, position)}
+                                            onRemove={(cat) => removeCategoryFromEmirate(emirate, cat)}
+                                            onReorder={(newOrder) => reorderEmirateCategories(emirate, newOrder)}
+                                        />
                                     </div>
                                 </div>
                             </div>
@@ -454,7 +451,8 @@ export default function AdminSettingsPage() {
                     )}
                 </div>
 
-                {/* Section 3 — More Settings placeholder */}
+                {/* Section 3 — More Settings placeholder (hidden for MANAGER) */}
+                {userRole !== 'MANAGER' && (
                 <div style={{
                     backgroundColor: '#FFFFFF', borderRadius: '16px',
                     boxShadow: '0 1px 4px rgba(0,0,0,0.06)', padding: '24px',
@@ -466,6 +464,7 @@ export default function AdminSettingsPage() {
                         Campaign configuration, redemption rules, and other settings coming soon.
                     </p>
                 </div>
+                )}
 
             </main>
 
@@ -510,6 +509,7 @@ export default function AdminSettingsPage() {
                                         setNewVar(v => ({ ...v, key: val }));
                                     }}
                                     placeholder="e.g. SERVICE_TYPE"
+                                    maxLength={100}
                                 />
                                 <p style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>
                                     Auto-uppercased. Used in template rendering.
@@ -527,6 +527,7 @@ export default function AdminSettingsPage() {
                                     }}
                                     onBlur={() => setNewVar(v => ({ ...v, label: v.label.trim() }))}
                                     placeholder="e.g. Service Type"
+                                    maxLength={100}
                                 />
                             </div>
                             <div>
@@ -541,6 +542,7 @@ export default function AdminSettingsPage() {
                                     }}
                                     onBlur={() => setNewVar(v => ({ ...v, description: v.description.trim() }))}
                                     placeholder="e.g. Type of service offered"
+                                    maxLength={500}
                                 />
                             </div>
 
@@ -699,6 +701,130 @@ function VariableRow({
                     Delete
                 </button>
             )}
+        </div>
+    )
+}
+
+function EmirateCategoryEditor({
+    emirate, onAdd, onRemove, onReorder,
+}: {
+    emirate: EmirateConfig
+    onAdd: (cat: string, position?: number) => void
+    onRemove: (cat: string) => void
+    onReorder: (newOrder: string[]) => void
+}) {
+    const [newCat, setNewCat] = useState('')
+    const [insertPosition, setInsertPosition] = useState<string>('end')
+    const [dragIndex, setDragIndex] = useState<number | null>(null)
+    const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+
+    function handleAdd() {
+        if (!newCat.trim()) return
+        const position = insertPosition === 'end' ? emirate.categories.length
+            : insertPosition === 'start' ? 0
+            : emirate.categories.indexOf(insertPosition) + 1
+        onAdd(newCat, position)
+        setNewCat('')
+        setInsertPosition('end')
+    }
+
+    function handleDrop(dropIndex: number) {
+        if (dragIndex === null || dragIndex === dropIndex) { setDragIndex(null); setDragOverIndex(null); return }
+        const updated = [...emirate.categories]
+        const [moved] = updated.splice(dragIndex, 1)
+        updated.splice(dropIndex, 0, moved)
+        onReorder(updated)
+        setDragIndex(null)
+        setDragOverIndex(null)
+    }
+
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                {emirate.categories.map((cat, idx) => (
+                    <span
+                        key={cat}
+                        draggable
+                        onDragStart={() => setDragIndex(idx)}
+                        onDragOver={e => { e.preventDefault(); setDragOverIndex(idx) }}
+                        onDragLeave={() => setDragOverIndex(prev => prev === idx ? null : prev)}
+                        onDrop={() => handleDrop(idx)}
+                        onDragEnd={() => { setDragIndex(null); setDragOverIndex(null) }}
+                        title="Drag to reorder"
+                        style={{
+                            display: 'inline-flex', alignItems: 'center', gap: '5px',
+                            fontSize: '11px', fontFamily: 'monospace', fontWeight: '600',
+                            backgroundColor: dragOverIndex === idx ? '#DCEBFF' : '#F0F0F0', color: '#444',
+                            padding: '4px 6px 4px 10px', borderRadius: '100px',
+                            cursor: 'grab', opacity: dragIndex === idx ? 0.4 : 1,
+                            border: dragOverIndex === idx ? '1.5px dashed #0074BD' : '1.5px solid transparent',
+                            transition: 'background-color 0.15s, border-color 0.15s',
+                        }}
+                    >
+                        <span style={{ color: '#AAA', fontSize: '10px' }}>⠿</span>
+                        {cat}
+                        <span
+                            onClick={() => onRemove(cat)}
+                            title={`Remove ${cat}`}
+                            style={{
+                                cursor: 'pointer', width: '16px', height: '16px', borderRadius: '50%',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                backgroundColor: 'rgba(0,0,0,0.08)', fontSize: '11px', lineHeight: 1, color: '#666',
+                            }}
+                        >
+                            ×
+                        </span>
+                    </span>
+                ))}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                {emirate.categories.length > 1 && (
+                    <select
+                        value={insertPosition}
+                        onChange={e => setInsertPosition(e.target.value)}
+                        style={{
+                            fontSize: '11px', padding: '4px 6px', borderRadius: '6px',
+                            border: '1px solid #E0E0E0', color: '#666', backgroundColor: '#FFFFFF',
+                            cursor: 'pointer',
+                        }}
+                    >
+                        <option value="start">Insert at start</option>
+                        {emirate.categories.map(cat => (
+                            <option key={cat} value={cat}>After {cat}</option>
+                        ))}
+                        <option value="end">Insert at end</option>
+                    </select>
+                )}
+                <input
+                    value={newCat}
+                    onChange={e => {
+                        let val = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '')
+                        if (val.length > 10) val = val.slice(0, 10)
+                        setNewCat(val)
+                    }}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAdd() } }}
+                    placeholder="+ add"
+                    style={{
+                        width: '64px', padding: '4px 8px', fontSize: '11px', fontFamily: 'monospace',
+                        border: '1.5px dashed #C7D2FE', borderRadius: '100px', outline: 'none',
+                        color: '#1A1A1A', backgroundColor: '#FAFBFF',
+                    }}
+                />
+                {newCat.trim() && (
+                    <span
+                        onClick={handleAdd}
+                        style={{
+                            fontSize: '11px',
+                            fontWeight: '600',
+                            color: '#0074BD',
+                            cursor: 'pointer',
+                            marginLeft: '4px',
+                        }}
+                    >
+                        add
+                    </span>
+                )}
+            </div>
         </div>
     )
 }

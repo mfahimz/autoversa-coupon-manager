@@ -30,6 +30,11 @@ export async function GET(request: NextRequest) {
     return new Response('Unauthorized', { status: 401 })
   }
 
+  const EXPORT_ALLOWED_ROLES = ['ADMIN', 'ASSISTANT_GENERAL_MANAGER', 'CEO']
+  if (!EXPORT_ALLOWED_ROLES.includes(profileData.user_role)) {
+    return new Response('Forbidden', { status: 403 })
+  }
+
   const perms = await loadPermissionsForRole(profileData.user_role)
   if (!checkPermission(perms, profileData.user_role, 'page:coupons', 'view')) {
     return new Response('Forbidden', { status: 403 })
@@ -76,6 +81,16 @@ export async function GET(request: NextRequest) {
     return new Response('Failed to fetch coupons', { status: 500 })
   }
 
+  const issuerIds = Array.from(new Set((coupons || []).map((c: any) => c.issued_by).filter(Boolean))) as string[]
+  const issuerMap = new Map<string, string>()
+  if (issuerIds.length > 0) {
+    const { data: issuerProfiles } = await supabase
+      .from('profiles')
+      .select('id, full_name')
+      .in('id', issuerIds)
+    ;(issuerProfiles || []).forEach((p: any) => issuerMap.set(p.id, p.full_name || 'Unknown'))
+  }
+
   const workbook = new ExcelJS.Workbook()
   const worksheet = workbook.addWorksheet('Coupons')
 
@@ -85,7 +100,7 @@ export async function GET(request: NextRequest) {
     { header: 'Brand', key: 'brand', width: 16 },
     { header: 'Offer', key: 'offer', width: 24 },
     { header: 'Plate', key: 'plate', width: 16 },
-    { header: 'Advisor', key: 'advisor', width: 20 },
+    { header: 'Issued By', key: 'issuedBy', width: 20 },
     { header: 'Mobile', key: 'mobile', width: 16 },
     { header: 'Issue Date', key: 'issueDate', width: 14 },
     { header: 'Expiry Date', key: 'expiryDate', width: 14 },
@@ -101,7 +116,7 @@ export async function GET(request: NextRequest) {
     brand: c.coupon_type === 'LOYALTY' ? (c.offers?.loyalty_brand || 'Loyalty') : (c.offers?.referral_brand || 'Referral'),
     offer: c.offer_title || '',
     plate: c.plate_combined_string || '',
-    advisor: c.advisor_name || '',
+    issuedBy: c.issued_by ? (issuerMap.get(c.issued_by) || '—') : '—',
     mobile: c.mobile_number ? '971' + c.mobile_number : '',
     issueDate: formatDate(c.issue_date),
     expiryDate: formatDate(c.expiry_date),

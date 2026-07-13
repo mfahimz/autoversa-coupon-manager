@@ -1,6 +1,6 @@
 'use client'
 
-const ALLOWED_ROLES = ['ADMIN', 'MANAGER', 'ASSISTANT_GENERAL_MANAGER', 'CEO']
+const ALLOWED_ROLES = ['ADMIN', 'ASSISTANT_GENERAL_MANAGER', 'CEO']
 
 interface ExportButtonProps {
   userRole: string | null | undefined
@@ -8,7 +8,7 @@ interface ExportButtonProps {
   label?: string
 }
 
-export default function ExportButton({ userRole, exportUrl, label = 'Export to Excel' }: ExportButtonProps) {
+export default function ExportButton({ userRole, exportUrl, label = 'Export' }: ExportButtonProps) {
   if (!userRole || !ALLOWED_ROLES.includes(userRole)) return null
 
   return (
@@ -30,7 +30,7 @@ export default function ExportButton({ userRole, exportUrl, label = 'Export to E
         whiteSpace: 'nowrap',
       }}
     >
-      📊 {label}
+      {label}
     </a>
   )
 }

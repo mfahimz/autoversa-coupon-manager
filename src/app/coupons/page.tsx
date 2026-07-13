@@ -32,6 +32,7 @@ interface Coupon {
   parent_coupon_id: string | null
   loyalty_brand: string | null
   referral_brand: string | null
+  issued_by: string | null
 }
 
 interface AppointmentStatus {
@@ -112,6 +113,7 @@ export default function CouponsPage() {
   const supabase = createClient()
 
   const [coupons, setCoupons] = useState<Coupon[]>([])
+  const [creatorNames, setCreatorNames] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [kpiTab, setKpiTab] = useState<KpiTab>('total')
@@ -221,6 +223,19 @@ export default function CouponsPage() {
     const couponIds = mappedCoupons.map(c => c.id)
     const referralIds = mappedCoupons.filter(c => c.coupon_type === 'REFERRAL').map(c => c.id)
     const offerIds = Array.from(new Set(mappedCoupons.map(c => c.offer_id).filter(Boolean))) as string[]
+    const issuerIds = Array.from(new Set(mappedCoupons.map(c => c.issued_by).filter(Boolean))) as string[]
+
+    if (issuerIds.length > 0) {
+      const { data: issuerProfiles } = await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .in('id', issuerIds)
+      if (issuerProfiles) {
+        const map: Record<string, string> = {}
+        issuerProfiles.forEach((p: any) => { map[p.id] = p.full_name || 'Unknown' })
+        setCreatorNames(map)
+      }
+    }
 
     const [apptResult, visitedResult, stagesResult] = await Promise.all([
       couponIds.length > 0
@@ -430,7 +445,7 @@ export default function CouponsPage() {
 
     let query = supabase
       .from('coupons')
-      .select('id, coupon_code, offer_title, plate_combined_string, issue_date, expiry_date, advisor_name, status, stage, offer_id, offers(loyalty_brand, referral_brand)')
+      .select('id, coupon_code, offer_title, plate_combined_string, issue_date, expiry_date, advisor_name, issued_by, status, stage, offer_id, offers(loyalty_brand, referral_brand)')
       .eq('coupon_type', 'LOYALTY')
 
     if (verifyMode === 'code') {
@@ -457,8 +472,18 @@ export default function CouponsPage() {
       if (stagesData) stages = stagesData
     }
 
+    let issuerName = '—'
+    if ((couponData as any).issued_by) {
+      const { data: issuerProfile } = await supabase
+        .from('profiles')
+        .select('full_name')
+        .eq('id', (couponData as any).issued_by)
+        .single()
+      issuerName = issuerProfile?.full_name || '—'
+    }
+
     setVerifyResult({
-      coupon: couponData,
+      coupon: { ...couponData, issuer_name: issuerName },
       stages,
       offerBrands: {
         loyalty_brand: couponData.offers?.loyalty_brand || null,
@@ -715,7 +740,7 @@ export default function CouponsPage() {
                 backgroundColor: '#F7F7F7',
                 borderBottom: '1px solid #EEEEEE',
               }}>
-                {['Coupon Code', 'Offer', 'Plate', 'Type', 'Advisor', 'Issued', 'Stage / Status', 'Actions'].map(h => (
+                {['Coupon Code', 'Offer', 'Plate', 'Type', 'Issued By', 'Issued', 'Stage / Status', 'Actions'].map(h => (
                   <span key={h} style={{ fontSize: '11px', fontWeight: '700', color: '#666', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</span>
                 ))}
               </div>
@@ -785,7 +810,9 @@ export default function CouponsPage() {
                         {isLoyaltyCoupon ? (coupon.loyalty_brand || 'Loyalty') : (coupon.referral_brand || 'Referral')}
                       </span>
 
-                      <span style={{ fontSize: '12px', color: '#444' }}>{coupon.advisor_name || '—'}</span>
+                      <span style={{ fontSize: '12px', color: '#444' }}>
+                        {coupon.issued_by ? (creatorNames[coupon.issued_by] || '—') : '—'}
+                      </span>
 
                       <div>
                         <p style={{ fontSize: '12px', color: '#444', margin: 0 }}>{formatDate(coupon.issue_date)}</p>
@@ -1044,7 +1071,7 @@ export default function CouponsPage() {
                         { label: 'Loyalty Plate', value: coupon.plate_combined_string || '—', mono: true },
                         { label: 'Issue Date', value: formatDate(coupon.issue_date) },
                         { label: 'Expiry Date', value: formatDate(coupon.expiry_date), warn: isExpired && coupon.status === 'ACTIVE' },
-                        { label: 'Issued By', value: coupon.advisor_name || '—' },
+                        { label: 'Issued By', value: coupon.issuer_name || '—' },
                         { label: 'Status', value: coupon.status },
                         { label: 'Referral Visits Completed', value: String(currentStage) + (maxStage ? ` of ${maxStage} stages` : '') },
                       ].map(row => (

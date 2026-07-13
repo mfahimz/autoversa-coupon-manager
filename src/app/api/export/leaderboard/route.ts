@@ -23,7 +23,8 @@ export async function GET() {
     return new Response('Unauthorized', { status: 401 })
   }
 
-  if (profileData.user_role === 'RECEPTIONIST') {
+  const EXPORT_ALLOWED_ROLES = ['ADMIN', 'ASSISTANT_GENERAL_MANAGER', 'CEO']
+  if (!EXPORT_ALLOWED_ROLES.includes(profileData.user_role)) {
     return new Response('Forbidden', { status: 403 })
   }
 

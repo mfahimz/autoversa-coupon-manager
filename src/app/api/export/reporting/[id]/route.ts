@@ -32,6 +32,11 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
     return new Response('Unauthorized', { status: 401 })
   }
 
+  const EXPORT_ALLOWED_ROLES = ['ADMIN', 'ASSISTANT_GENERAL_MANAGER', 'CEO']
+  if (!EXPORT_ALLOWED_ROLES.includes(profileData.user_role)) {
+    return new Response('Forbidden', { status: 403 })
+  }
+
   const perms = await loadPermissionsForRole(profileData.user_role)
   if (!checkPermission(perms, profileData.user_role, 'page:reporting', 'view')) {
     return new Response('Forbidden', { status: 403 })
@@ -47,6 +52,8 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
     .eq('id', offerId)
     .single()
 
+  let issuerNameMap = new Map<string, string>()
+
   if (!offer) {
     return new Response('Offer not found', { status: 404 })
   }
@@ -58,6 +65,17 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
   if (dateFrom) couponQuery = couponQuery.gte('issue_date', dateFrom)
   if (dateTo) couponQuery = couponQuery.lte('issue_date', dateTo)
   const { data: coupons } = await couponQuery
+
+  if (coupons && coupons.length > 0) {
+    const issuerIds = Array.from(new Set(coupons.map((c: any) => c.issued_by).filter(Boolean))) as string[]
+    if (issuerIds.length > 0) {
+      const { data: issuerProfiles } = await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .in('id', issuerIds)
+      ;(issuerProfiles || []).forEach((p: any) => issuerNameMap.set(p.id, p.full_name || 'Unknown'))
+    }
+  }
 
   let apptQuery = supabase
     .from('appointments')
@@ -107,7 +125,7 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
   const advisorMap: Record<string, { name: string; code: string | null; issued: number; visits: number; commission: number }> = {}
   loyaltyCoupons.forEach((c: any) => {
     const key = c.issued_by || 'unknown'
-    if (!advisorMap[key]) advisorMap[key] = { name: c.advisor_name || 'Unknown', code: c.advisor_code, issued: 0, visits: 0, commission: 0 }
+    if (!advisorMap[key]) advisorMap[key] = { name: (key !== 'unknown' ? issuerNameMap.get(key) : null) || c.advisor_name || 'Unknown', code: c.advisor_code, issued: 0, visits: 0, commission: 0 }
     advisorMap[key].issued++
   })
   const referralToAdvisor: Record<string, string> = {}
@@ -129,7 +147,7 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
   const leaderboardSheet = workbook.addWorksheet('Advisor Leaderboard')
   const leaderboardColumns = [
     { header: 'Rank', key: 'rank', width: 8 },
-    { header: 'Advisor', key: 'advisor', width: 22 },
+    { header: 'Issued By', key: 'advisor', width: 22 },
     { header: 'Code', key: 'code', width: 14 },
     { header: 'Coupons Issued', key: 'issued', width: 16 },
     { header: (offer.referral_brand || 'Referral') + ' Invoiced', key: 'visits', width: 18 },

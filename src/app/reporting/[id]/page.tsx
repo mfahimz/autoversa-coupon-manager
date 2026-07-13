@@ -128,6 +128,7 @@ export default function OfferReportPage() {
     const [granularity, setGranularity] = useState<'auto' | 'daily' | 'weekly'>('auto')
     const [leaderboardPage, setLeaderboardPage] = useState(1)
     const [offerStages, setOfferStages] = useState<{ stage_number: number; reward_label: string }[]>([])
+    const [issuerNames, setIssuerNames] = useState<Record<string, string>>({})
 
     useEffect(() => { loadData() }, [offerId])
 
@@ -193,6 +194,21 @@ export default function OfferReportPage() {
         if (offerData) setOffer(offerData)
         if (couponData) setCoupons(couponData)
         if (apptData) setAppointments(apptData)
+
+        if (couponData && couponData.length > 0) {
+            const issuerIds = Array.from(new Set(couponData.map((c: any) => c.issued_by).filter(Boolean))) as string[]
+            if (issuerIds.length > 0) {
+                const { data: issuerProfiles } = await supabase
+                    .from('profiles')
+                    .select('id, full_name')
+                    .in('id', issuerIds)
+                if (issuerProfiles) {
+                    const map: Record<string, string> = {}
+                    issuerProfiles.forEach((p: any) => { map[p.id] = p.full_name || 'Unknown' })
+                    setIssuerNames(map)
+                }
+            }
+        }
 
         // Resolve joins for splits if splits exist
         if (RECEPTIONIST_COUPON_CREATION_ENABLED && rawSplits && rawSplits.length > 0) {
@@ -374,6 +390,21 @@ export default function OfferReportPage() {
         })
     }, [filteredAppts, effectiveGranularity, offer])
 
+    // Commission earned per period (not cumulative)
+    const commissionOverTimeChart = useMemo(() => {
+        const visitedMap = groupByPeriod(
+            visited.filter(a => a.appointment_date !== null).map(a => ({ date: a.appointment_date as string })),
+            effectiveGranularity
+        )
+        const allKeys = Object.keys(visitedMap).sort()
+        return allKeys.map(k => ({
+            date: effectiveGranularity === 'weekly'
+                ? `Wk ${new Date(k).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}`
+                : new Date(k).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+            Commission: (visitedMap[k] || 0) * (offer?.commission_amount || 0),
+        }))
+    }, [filteredAppts, effectiveGranularity, offer])
+
     // Sub-offer breakdown
     const subOfferBreakdown = useMemo(() => {
         const map: Record<string, number> = {}
@@ -393,7 +424,7 @@ export default function OfferReportPage() {
         // Count coupons issued per advisor using issued_by (user ID) as key
         filteredCoupons.filter(c => c.coupon_type === 'LOYALTY').forEach(c => {
             const key = c.issued_by || 'unknown'
-            if (!map[key]) map[key] = { name: c.advisor_name || 'Unknown', code: c.advisor_code, issued: 0, visits: 0, commission: 0 }
+            if (!map[key]) map[key] = { name: (key !== 'unknown' ? issuerNames[key] : null) || c.advisor_name || 'Unknown', code: c.advisor_code, issued: 0, visits: 0, commission: 0 }
             map[key].issued++
         })
 
@@ -420,7 +451,16 @@ export default function OfferReportPage() {
         }
 
         return Object.values(map).sort((a, b) => b.visits - a.visits)
-    }, [filteredCoupons, filteredAppts, offer])
+    }, [filteredCoupons, filteredAppts, offer, issuerNames])
+
+    // Top 15 advisors for visual comparison chart
+    const advisorComparisonChart = useMemo(() => {
+        return advisorStats.slice(0, 15).map(a => ({
+            name: a.name.length > 14 ? a.name.slice(0, 14) + '…' : a.name,
+            Issued: a.issued,
+            Invoiced: a.visits,
+        }))
+    }, [advisorStats])
 
     // Appointment status breakdown
     const apptStatusBreakdown = useMemo(() => {
@@ -638,7 +678,7 @@ export default function OfferReportPage() {
                                     <div key={s.name}>
                                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                                             <span style={{ fontSize: '12px', fontWeight: '600', color: '#1A1A1A' }}>{s.name}</span>
-                                            <span style={{ fontSize: '12px', fontWeight: '700', color: s.fill === '#E0E0E0' ? '#666' : s.fill }}>{s.value}</span>
+                                            <span style={{ fontSize: '12px', fontWeight: '700', color: s.fill === '#E0E0E0' ? '#666' : s.fill }}>{s.value} ({pct.toFixed(0)}%)</span>
                                         </div>
                                         <div style={{ height: '8px', backgroundColor: '#F0F0F0', borderRadius: '100px', overflow: 'hidden' }}>
                                             <div style={{ height: '100%', borderRadius: '100px', backgroundColor: s.fill, width: `${pct}%`, transition: 'width 0.5s ease' }} />
@@ -674,6 +714,26 @@ export default function OfferReportPage() {
                             </ResponsiveContainer>
                         )}
                     </div>
+
+                    {/* Commission earned over time */}
+                    <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+                        <h3 style={{ fontSize: '14px', fontWeight: '700', color: '#1A1A1A', margin: '0 0 4px' }}>Commission Earned Over Time</h3>
+                        <p style={{ fontSize: '12px', color: '#888', margin: '0 0 16px' }}>Commission accrued per {effectiveGranularity === 'weekly' ? 'week' : 'day'}</p>
+                        {commissionOverTimeChart.length === 0 ? (
+                            <div style={{ textAlign: 'center', padding: '40px', color: '#888', fontSize: '13px' }}>No commission in selected range</div>
+                        ) : (
+                            <ResponsiveContainer width="100%" height={220}>
+                                <BarChart data={commissionOverTimeChart} margin={{ top: 0, right: 0, left: -10, bottom: 0 }}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F0" />
+                                    <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#888' }} />
+                                    <YAxis tick={{ fontSize: 11, fill: '#888' }} tickFormatter={(v) => `AED ${v}`} />
+                                    <Tooltip contentStyle={{ fontSize: '12px', borderRadius: '8px', border: '1px solid #E0E0E0' }}
+                                        formatter={(v: any) => [`AED ${Number(v).toLocaleString()}`, 'Commission']} />
+                                    <Bar dataKey="Commission" name="Commission" fill="#f59e0b" radius={[3, 3, 0, 0]} />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        )}
+                    </div>
                 </div>
 
                 {/* Sub-offer breakdown */}
@@ -705,7 +765,7 @@ export default function OfferReportPage() {
                                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                                     <thead>
                                         <tr style={{ backgroundColor: '#F7F7F7', borderBottom: '1px solid #E0E0E0' }}>
-                                            {['Rank', 'Advisor', 'Code', 'Coupons Issued', (offer.referral_brand || 'Referral') + ' Invoiced', 'Commission Earned'].map(h => (
+                                            {['Rank', 'Issued By', 'Code', 'Coupons Issued', (offer.referral_brand || 'Referral') + ' Invoiced', 'Commission Earned'].map(h => (
                                                 <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontSize: '11px', fontWeight: '700', color: '#666', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</th>
                                             ))}
                                         </tr>
@@ -773,6 +833,25 @@ export default function OfferReportPage() {
                         </>
                     )}
                 </div>
+
+                {/* Advisor performance comparison */}
+                {advisorComparisonChart.length > 0 && (
+                    <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', marginBottom: '24px' }}>
+                        <h3 style={{ fontSize: '14px', fontWeight: '700', color: '#1A1A1A', margin: '0 0 4px' }}>Advisor Performance Comparison</h3>
+                        <p style={{ fontSize: '12px', color: '#888', margin: '0 0 16px' }}>Coupons issued vs invoiced visits, top 15 advisors</p>
+                        <ResponsiveContainer width="100%" height={Math.max(240, advisorComparisonChart.length * 36)}>
+                            <BarChart data={advisorComparisonChart} layout="vertical" margin={{ top: 0, right: 20, left: 10, bottom: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F0" horizontal={false} />
+                                <XAxis type="number" tick={{ fontSize: 11, fill: '#888' }} allowDecimals={false} />
+                                <YAxis dataKey="name" type="category" tick={{ fontSize: 11, fill: '#888' }} width={110} />
+                                <Tooltip contentStyle={{ fontSize: '12px', borderRadius: '8px', border: '1px solid #E0E0E0' }} />
+                                <Legend wrapperStyle={{ fontSize: '12px' }} />
+                                <Bar dataKey="Issued" name="Coupons Issued" fill="#162860" radius={[0, 3, 3, 0]} />
+                                <Bar dataKey="Invoiced" name="Invoiced" fill="#16a34a" radius={[0, 3, 3, 0]} />
+                            </BarChart>
+                        </ResponsiveContainer>
+                    </div>
+                )}
 
                 {/* Receptionist Commission Splits */}
                 {RECEPTIONIST_COUPON_CREATION_ENABLED && (

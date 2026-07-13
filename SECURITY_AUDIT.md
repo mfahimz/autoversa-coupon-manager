@@ -4,7 +4,7 @@
 |---|---|---|
 | 1. Data Access & Permissions | 2026-07-09 | 3 critical, 3 warnings |
 | 2. Business Rule Integrity | 2026-07-10 | 3 warnings, 2 informational |
-| 3. Input Validation, Storage & Session Handling | 2026-07-06 | 1 critical, 2 warnings, 1 informational |
+| 3. Input Validation, Storage & Session Handling | 2026-07-12 | No issues found |
 
 ---
 
@@ -88,27 +88,17 @@
 ## Zone 3 — Input Validation, Storage & Session Handling
 
 ### Critical
-- **Missing `is_active` status verification and sign-out redirect on Dashboard**:
-  - **What's wrong**: The dashboard page fetches the user's role profile but omits the `is_active` check and the redirect/sign-out logic.
-  - **Why it matters**: A user whose account has been deactivated (is_active = false) can still access the dashboard views and read metrics, advisor details, and pipelines.
-  - **Where**: [src/app/dashboard/page.tsx:L222-L285](file:///Users/fahim/autoversa-coupon-manager/src/app/dashboard/page.tsx#L222-L285)
+- **Missing `is_active` status verification and sign-out redirect check**:
+  - **Status**: Nothing to report. All user-facing protected pages now properly perform the active-user validation check and sign out/redirect deactivated users.
 
 ### Warning
-- **Raw Supabase query error messages leaked on booking appointment**:
-  - **What's wrong**: The raw `error.message` from the Supabase insert response is appended directly to the user-facing error toast.
-  - **Why it matters**: Exposes internal database details, column names, or schema info to clients if a database constraint/operation fails.
-  - **Where**: [src/app/appointments/page.tsx:L550](file:///Users/fahim/autoversa-coupon-manager/src/app/appointments/page.tsx#L550)
-- **Raw Supabase query error messages leaked on saving customer profile updates**:
-  - **What's wrong**: The raw `error.message` from the Supabase update response is appended directly to the user-facing error toast.
-  - **Why it matters**: Exposes database schema and internal error states directly to front-end users.
-  - **Where**: [src/app/customers/page.tsx:L189](file:///Users/fahim/autoversa-coupon-manager/src/app/customers/page.tsx#L189)
+- **Raw Supabase query error messages check**:
+  - **Status**: Nothing to report. Raw database query error messages are no longer displayed to users; generic error handling has been implemented.
 
 ### Informational
-- **Unsanitized dashboard search inputs**:
-  - **What's wrong**: The dashboard search inputs for filters (`rSearch`, `advisorSearch`, `adminPipelineSearch`) do not apply the existing sanitization pattern (`.replace(/[<>]/g, '')`).
-  - **Why it matters**: Potential for client-side text injection or formatting issues, though currently limited to client-side filtering variables.
-  - **Where**: [src/app/dashboard/page.tsx:L1035](file:///Users/fahim/autoversa-coupon-manager/src/app/dashboard/page.tsx#L1035), [src/app/dashboard/page.tsx:L1130](file:///Users/fahim/autoversa-coupon-manager/src/app/dashboard/page.tsx#L1130), and [src/app/dashboard/page.tsx:L1347](file:///Users/fahim/autoversa-coupon-manager/src/app/dashboard/page.tsx#L1347)
+- **Free-text input sanitization check**:
+  - **Status**: Nothing to report. User inputs are fully sanitized, and dashboard filter inputs have been updated to escape HTML brackets.
 - **No placeholder-style strings in JSX display text check**:
   - **Status**: Nothing to report. No `{PLACEHOLDER}` style strings exist in JSX display text.
 - **Storage bucket file uploads authentication gating check**:
-  - **Status**: Nothing to report. Storage bucket file uploads only occur in `OfferForm.tsx` via `saveOneTemplate`, which is embedded only in `NewOfferPage` and `EditOfferPage`. Both parent pages are protected by active-user authentication and role permission checks before rendering.
+  - **Status**: Nothing to report. Storage bucket uploads are strictly confined to authenticated-gated offer-creation and editing code paths.

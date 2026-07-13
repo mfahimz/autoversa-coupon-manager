@@ -283,7 +283,7 @@ function RecentCouponRow({ coupon }: { coupon: any }) {
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 0', borderBottom: '1px solid #F0F0F0' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
         <span style={{ fontSize: '14px', fontWeight: '600', color: '#1A1A1A' }}>{coupon.coupon_code}</span>
-        <span style={{ fontSize: '12px', color: '#666666' }}>{coupon.customer_name || 'Unknown'} · {coupon.advisor_name || 'Unknown Advisor'}</span>
+        <span style={{ fontSize: '12px', color: '#666666' }}>{coupon.customer_name || 'Unknown'} · {coupon.issuer_name || 'Unknown'}</span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         <span style={{ fontSize: '12px', color: '#666666' }}>{formatDate(coupon.issue_date)}</span>
@@ -420,7 +420,7 @@ export default function DashboardPage() {
         .order('full_name'),
       (supabase as any).rpc('get_dashboard_stats'),
       supabase.from('coupons')
-        .select('coupon_code, customer_name, advisor_name, issue_date, status')
+        .select('coupon_code, customer_name, advisor_name, issued_by, issue_date, status')
         .order('created_at', { ascending: false }).limit(8)
     ])
 
@@ -488,7 +488,24 @@ export default function DashboardPage() {
         referralVisits: statsRow?.referral_visits || 0,
       })
       const { data: recent } = recentResult
-      setRecentCoupons(recent || [])
+      if (recent && recent.length > 0) {
+        const recentIssuerIds = Array.from(new Set(recent.map((c: any) => c.issued_by).filter(Boolean))) as string[]
+        const issuerNameMap = new Map<string, string>()
+        if (recentIssuerIds.length > 0) {
+          const { data: issuerProfiles } = await supabase
+            .from('profiles')
+            .select('id, full_name')
+            .in('id', recentIssuerIds)
+          ;(issuerProfiles || []).forEach((p: any) => issuerNameMap.set(p.id, p.full_name || 'Unknown'))
+        }
+        const recentWithIssuer = recent.map((c: any) => ({
+          ...c,
+          issuer_name: c.issued_by ? (issuerNameMap.get(c.issued_by) || 'Unknown') : 'Unknown',
+        }))
+        setRecentCoupons(recentWithIssuer)
+      } else {
+        setRecentCoupons([])
+      }
     }
 
     setLoading(false)
