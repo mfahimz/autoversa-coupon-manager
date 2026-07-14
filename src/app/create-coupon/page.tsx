@@ -64,6 +64,13 @@ interface TemplateData {
   }[]
 }
 
+interface DuplicateCoupon {
+  coupon_code: string
+  coupon_type: string
+  offer_title: string | null
+  issued_by_name: string
+}
+
 
 function formatDate(dateStr: string): string {
   if (!dateStr) return '—'
@@ -124,6 +131,33 @@ async function upsertLoyaltyCustomer(
   }
 }
 
+// ─── Resolve issuer names for a set of coupon rows ────────────────────────────
+
+async function resolveIssuerNames(
+  supabase: ReturnType<typeof createClient>,
+  coupons: any[]
+): Promise<DuplicateCoupon[]> {
+  const issuerIds = Array.from(new Set(coupons.map(c => c.issued_by).filter(Boolean)))
+  let nameMap: Record<string, string> = {}
+
+  if (issuerIds.length > 0) {
+    const { data: profilesData } = await supabase
+      .from('profiles')
+      .select('id, full_name')
+      .in('id', issuerIds)
+    if (profilesData) {
+      profilesData.forEach((p: any) => { nameMap[p.id] = p.full_name || 'Unknown' })
+    }
+  }
+
+  return coupons.map(c => ({
+    coupon_code: c.coupon_code,
+    coupon_type: c.coupon_type,
+    offer_title: c.offer_title ?? null,
+    issued_by_name: nameMap[c.issued_by] || 'Unknown',
+  }))
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function CreateCouponPage() {
@@ -137,6 +171,7 @@ export default function CreateCouponPage() {
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [success, setSuccess] = useState<{ coupons: any[]; sequenceNumber: number } | null>(null)
+  const [duplicateModal, setDuplicateModal] = useState<DuplicateCoupon[] | null>(null)
 
   const [form, setForm] = useState({
     offer_id: '',
@@ -177,7 +212,7 @@ export default function CreateCouponPage() {
 
     const perms = await loadPermissionsForRole(profileData.user_role)
     const hasPerm = checkPermission(perms, profileData.user_role, 'page:create-coupon', 'view') ||
-                    (profileData.user_role === 'RECEPTIONIST' && RECEPTIONIST_COUPON_CREATION_ENABLED)
+      (profileData.user_role === 'RECEPTIONIST' && RECEPTIONIST_COUPON_CREATION_ENABLED)
     if (!hasPerm) {
       router.push('/dashboard')
       return
@@ -295,7 +330,7 @@ export default function CreateCouponPage() {
 
     const { data: existingCoupons, error: checkError } = await supabase
       .from('coupons')
-      .select('id, offer_id, status, offers(loyalty_brand)')
+      .select('id, offer_id, offer_title, status, coupon_code, coupon_type, issued_by, offers(loyalty_brand)')
       .eq('plate_combined_string', plate)
       .neq('status', 'CANCELLED')
 
@@ -305,23 +340,25 @@ export default function CreateCouponPage() {
       return
     }
 
-    const hasSameOffer = existingCoupons?.some(c => c.offer_id === selectedOffer.id)
-    if (hasSameOffer) {
-      showToast('A coupon for this offer has already been created for this plate number.', 'error')
+    const sameOfferMatches = existingCoupons?.filter(c => c.offer_id === selectedOffer.id) || []
+    if (sameOfferMatches.length > 0) {
+      const resolved = await resolveIssuerNames(supabase, sameOfferMatches)
+      setDuplicateModal(resolved)
       setSubmitting(false)
       return
     }
 
     const isMercedesOffer = selectedOffer.loyalty_brand?.toLowerCase().includes('mercedes')
     if (isMercedesOffer) {
-      const hasMercedesCoupon = existingCoupons?.some((c: any) => {
+      const mercedesMatches = existingCoupons?.filter((c: any) => {
         const brand = Array.isArray(c.offers)
           ? c.offers[0]?.loyalty_brand
           : c.offers?.loyalty_brand
         return brand?.toLowerCase().includes('mercedes')
-      })
-      if (hasMercedesCoupon) {
-        showToast('A Mercedes loyalty coupon has already been created for this plate number.', 'error')
+      }) || []
+      if (mercedesMatches.length > 0) {
+        const resolved = await resolveIssuerNames(supabase, mercedesMatches)
+        setDuplicateModal(resolved)
         setSubmitting(false)
         return
       }
@@ -654,6 +691,61 @@ export default function CreateCouponPage() {
           </button>
         </div>
       </main>
+
+      {duplicateModal && (
+        <div style={{
+          position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000, padding: '16px',
+        }}>
+          <div style={{
+            backgroundColor: '#FFFFFF', borderRadius: '20px', padding: '28px',
+            width: '100%', maxWidth: '480px',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+              <span style={{ fontSize: '24px' }}>⚠️</span>
+              <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>Coupon Already Exists</h2>
+            </div>
+            <p style={{ color: '#666', fontSize: '13px', margin: '0 0 20px' }}>
+              A coupon has already been issued for this plate. Details below.
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '20px' }}>
+              {duplicateModal.map((dup, i) => (
+                <div key={i} style={{
+                  backgroundColor: '#F7F7F7', borderRadius: '10px', padding: '14px',
+                  borderLeft: `4px solid ${dup.coupon_type === 'LOYALTY' ? '#162860' : '#0074BD'}`,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                    <span style={{
+                      fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '4px',
+                      backgroundColor: dup.coupon_type === 'LOYALTY' ? '#162860' : '#0074BD', color: '#FFFFFF',
+                    }}>
+                      {dup.coupon_type}
+                    </span>
+                    {dup.offer_title && (
+                      <span style={{ fontSize: '12px', color: '#666' }}>{dup.offer_title}</span>
+                    )}
+                  </div>
+                  <p style={{ fontSize: '13px', fontWeight: '700', color: '#1A1A1A', fontFamily: 'monospace', margin: '0 0 4px', wordBreak: 'break-all' }}>
+                    {dup.coupon_code}
+                  </p>
+                  <p style={{ fontSize: '12px', color: '#888', margin: 0 }}>
+                    Issued by <strong style={{ color: '#444' }}>{dup.issued_by_name}</strong>
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            <button onClick={() => setDuplicateModal(null)} style={{
+              width: '100%', padding: '12px', backgroundColor: '#0074BD', color: '#FFFFFF',
+              border: 'none', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: 'pointer',
+            }}>
+              Close
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
