@@ -38,7 +38,7 @@ function formatDateTime(iso: string | null): string {
 
 function getNextSync(lastSync: string | null): string {
   if (!lastSync) return '—'
-  const next = new Date(new Date(lastSync).getTime() + 15 * 60 * 1000)
+  const next = new Date(new Date(lastSync).getTime() + 5 * 60 * 1000)
   return next.toLocaleString('en-GB', {
     day: '2-digit', month: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
@@ -81,7 +81,13 @@ export default function AdminInvoicesPage() {
         setLoading(false)
     }, [dateFrom, dateTo])
 
-    useEffect(() => { loadData() }, [loadData])
+  useEffect(() => {
+    loadData()
+    const interval = setInterval(() => {
+      loadData()
+    }, 30000)
+    return () => clearInterval(interval)
+  }, [loadData])
 
     async function handleSyncNow() {
         setSyncing(true)
@@ -122,7 +128,7 @@ export default function AdminInvoicesPage() {
                     <div>
                         <h1 className="text-2xl font-bold text-[#162860]">Invoice Sync</h1>
                         <p className="text-sm text-[#666666] mt-1">
-                            Live invoice counts synced from the backup server every 15 minutes.
+                            Live invoice counts synced from the backup server every 5 minutes.
                         </p>
                     </div>
                     <button
@@ -155,7 +161,7 @@ export default function AdminInvoicesPage() {
                             </div>
                             <div className="flex justify-between">
                                 <span className="text-[#666666]">Sync Frequency</span>
-                                <span className="font-medium text-[#1A1A1A]">Every 15 minutes (GitHub Actions)</span>
+                                <span className="font-medium text-[#1A1A1A]">Every 5 minutes (GitHub Actions)</span>
                             </div>
                             <div className="flex justify-between">
                                 <span className="text-[#666666]">Method</span>
@@ -191,17 +197,20 @@ export default function AdminInvoicesPage() {
                     <div className="rounded-xl border border-gray-200 p-5 bg-white shadow-sm">
                         <h2 className="text-sm font-semibold text-[#162860] uppercase tracking-wide mb-4">Sync Status</h2>
                         <div className="space-y-3 text-sm mb-4">
-                            <div className="flex justify-between">
+                            <div className="flex justify-between items-center">
                                 <span className="text-[#666666]">Last Sync</span>
-                                <span className="font-medium text-[#1A1A1A]">{formatDateTime(lastSync)}</span>
+                                <span className="font-medium text-[#1A1A1A] flex items-center gap-1.5">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                                    {formatDateTime(lastSync)}
+                                </span>
                             </div>
                             <div className="flex justify-between">
                                 <span className="text-[#666666]">Next Sync (approx)</span>
                                 <span className="font-medium text-[#1A1A1A]">{getNextSync(lastSync)}</span>
                             </div>
-                            <div className="flex justify-between">
+                            <div className="flex justify-between items-center">
                                 <span className="text-[#666666]">Today's Total Invoices</span>
-                                <span className="text-xl font-bold text-[#162860]">{totalToday}</span>
+                                <span className="text-2xl font-bold text-[#0074BD]">{totalToday}</span>
                             </div>
                         </div>
 
@@ -292,19 +301,19 @@ export default function AdminInvoicesPage() {
                                     )
                                 })}
                                 {/* Grand total row */}
-                                <tr className="bg-[#F7F7F7] border-t border-gray-200">
-                                    <td className="px-5 py-3 font-semibold text-[#162860]">Total</td>
+                                <tr className="bg-[#162860] text-white border-t border-gray-200">
+                                    <td className="px-5 py-3 font-semibold">Total</td>
                                     {advisorMap.map(a => {
                                         const advisorTotal = invoices
                                             .filter(r => r.advisor_code === a.advisorCode)
                                             .reduce((sum, r) => sum + (r.invoice_count ?? 0), 0)
                                         return (
-                                            <td key={a.advisorCode} className="px-4 py-3 text-center font-semibold text-[#162860]">
+                                            <td key={a.advisorCode} className="px-4 py-3 text-center font-semibold text-white">
                                                 {advisorTotal}
                                             </td>
                                         )
                                     })}
-                                    <td className="px-4 py-3 text-center font-bold text-[#162860]">{totalAll}</td>
+                                    <td className="px-4 py-3 text-center font-bold text-white">{totalAll}</td>
                                 </tr>
                             </tbody>
                         </table>
