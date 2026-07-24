@@ -392,6 +392,51 @@ export type Database = {
           },
         ]
       }
+      coupon_follow_ups: {
+        Row: {
+          coupon_id: string
+          created_at: string
+          follow_up_status: string
+          followed_up_by: string
+          id: string
+          notes: string | null
+          updated_at: string
+        }
+        Insert: {
+          coupon_id: string
+          created_at?: string
+          follow_up_status?: string
+          followed_up_by: string
+          id?: string
+          notes?: string | null
+          updated_at?: string
+        }
+        Update: {
+          coupon_id?: string
+          created_at?: string
+          follow_up_status?: string
+          followed_up_by?: string
+          id?: string
+          notes?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "coupon_follow_ups_coupon_id_fkey"
+            columns: ["coupon_id"]
+            isOneToOne: false
+            referencedRelation: "coupons"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "coupon_follow_ups_followed_up_by_fkey"
+            columns: ["followed_up_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       coupons: {
         Row: {
           advisor_code: string | null

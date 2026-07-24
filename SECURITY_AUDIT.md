@@ -2,7 +2,7 @@
 
 | Zone | Last Checked | Result |
 |---|---|---|
-| 1. Data Access & Permissions | 2026-07-09 | 3 critical, 3 warnings |
+| 1. Data Access & Permissions | 2026-07-16 | 3 critical, 3 warnings |
 | 2. Business Rule Integrity | 2026-07-10 | 3 warnings, 2 informational |
 | 3. Input Validation, Storage & Session Handling | 2026-07-12 | No issues found |
 
@@ -14,7 +14,7 @@
 - **Unscoped appointments query**:
   - **What's wrong**: The query fetches all appointment rows (including sensitive PII) without scoping to the logged-in user or verifying their role.
   - **Why it matters**: Service advisors and other non-admin roles can read private customer details and vehicle info of other advisors.
-  - **Where**: [src/app/appointments/page.tsx:L237](file:///Users/fahim/autoversa-coupon-manager/src/app/appointments/page.tsx#L237) and [src/app/appointments/page.tsx:L271-L276](file:///Users/fahim/autoversa-coupon-manager/src/app/appointments/page.tsx#L271-L276)
+  - **Where**: [src/app/appointments/page.tsx:L236](file:///Users/fahim/autoversa-coupon-manager/src/app/appointments/page.tsx#L236) and [src/app/appointments/page.tsx:L271-L275](file:///Users/fahim/autoversa-coupon-manager/src/app/appointments/page.tsx#L271-L275)
 - **Unscoped customers query**:
   - **What's wrong**: The query fetches all company-wide customer records from `loyalty_customers` and `referral_customers` without applying any user or advisor filters.
   - **Why it matters**: Non-admin roles (e.g. advisors) can retrieve customer PII for accounts and vehicles not assigned to them.
@@ -22,7 +22,7 @@
 - **Unscoped dashboard coupons query**:
   - **What's wrong**: The page executes a query to fetch the 8 most recent coupons globally on page initialization, regardless of the logged-in user's role or scope.
   - **Why it matters**: Service advisors or receptionists can read recent coupon data including customer names and coupon codes.
-  - **Where**: [src/app/dashboard/page.tsx:L342-L344](file:///Users/fahim/autoversa-coupon-manager/src/app/dashboard/page.tsx#L342-L344)
+  - **Where**: [src/app/dashboard/page.tsx:L421-L423](file:///Users/fahim/autoversa-coupon-manager/src/app/dashboard/page.tsx#L421-L423)
 
 ### Warning
 - **Missing `checkPermission()` verification on users page**:
@@ -32,7 +32,7 @@
 - **Missing `checkPermission()` verification on dashboard page**:
   - **What's wrong**: The page renders role-specific components directly without verifying if the user has `page:dashboard` view permissions.
   - **Why it matters**: Users can access dashboard endpoints and views directly via URL even if dashboard access is disabled for their role.
-  - **Where**: [src/app/dashboard/page.tsx:L238-L415](file:///Users/fahim/autoversa-coupon-manager/src/app/dashboard/page.tsx#L238-L415)
+  - **Where**: [src/app/dashboard/page.tsx:L435-L438](file:///Users/fahim/autoversa-coupon-manager/src/app/dashboard/page.tsx#L435-L438)
 - **Missing action-specific permission checks on users page**:
   - **What's wrong**: User management mutations are executed without verifying user-specific action permissions (`action:permission:update`, `action:user:update_role`, `action:user:update_advisor_code`, `action:user:toggle_active`).
   - **Why it matters**: Granular permissions defined in the RBAC registry are not enforced when actions are performed.

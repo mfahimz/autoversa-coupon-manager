@@ -4,7 +4,6 @@ import { AppSplash } from '@/components/layout/AppSplash'
 import { TopLoaderWrapper } from '@/components/layout/TopLoaderWrapper'
 import { Toaster } from 'sonner'
 import './globals.css'
-import autoversaLogo from '@/assets/AutoVersa_logo_fav.png'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -12,8 +11,8 @@ export const metadata: Metadata = {
   title: 'AutoVersa Coupon Manager',
   description: 'AutoVersa Coupon Management System',
   icons: {
-    icon: autoversaLogo.src,
-    apple: autoversaLogo.src,
+    icon: '/autoversa_dark_logo.jpeg',
+    apple: '/autoversa_dark_logo.jpeg',
   },
 }
 

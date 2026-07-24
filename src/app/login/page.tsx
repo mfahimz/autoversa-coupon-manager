@@ -5,7 +5,6 @@ export const dynamic = 'force-dynamic'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import autoversaLogo from '@/assets/AutoVersa_logo_fav.png'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -135,7 +134,7 @@ export default function LoginPage() {
 
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '28px' }}>
               <img
-                src={autoversaLogo.src}
+                src="/autoversa_temp_logo.png"
                 alt="AutoVersa"
                 style={{ height: '52px', objectFit: 'contain', animation: 'logoGlow 3s ease-in-out infinite', borderRadius: '8px' }}
               />

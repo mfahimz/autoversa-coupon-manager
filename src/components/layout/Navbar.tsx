@@ -4,7 +4,6 @@ import { useState, useEffect, useRef } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { loadPermissionsForRole, checkPermission, PermissionsMap } from '@/lib/permissions'
-import autoversaLogo from '@/assets/AutoVersa_logo_fav.png'
 
 const ALL_NAV_ITEMS = [
     { label: 'Dashboard', href: '/dashboard', resource: 'page:dashboard' },
@@ -13,6 +12,7 @@ const ALL_NAV_ITEMS = [
     { label: 'Appointments', href: '/appointments', resource: 'page:appointments' },
     { label: 'Offers', href: '/offers', resource: 'page:offers' },
     { label: 'Reports', href: '/reporting', resource: 'page:reporting' },
+    { label: 'Coupon Follow-Up', href: '/follow-up', resource: 'page:follow-up' },
 ]
 
 const ADMIN_DROPDOWN = [
@@ -177,7 +177,7 @@ export default function Navbar() {
                 }}>
 
                     <img
-                        src={autoversaLogo.src}
+                        src="/autoversa_temp_logo.png"
                         alt="AutoVersa"
                         onClick={() => router.push('/dashboard')}
                         style={{ height: '32px', objectFit: 'contain', cursor: 'pointer', flexShrink: 0, borderRadius: '6px' }}
