@@ -387,7 +387,7 @@ export default function DashboardPage() {
       getAllAdvisorsMissingStatus().then(statuses => {
         const needsAction = statuses.some(s => s.needsBaseline || s.missingDays.length > 0)
         if (needsAction) {
-          setIsInvoiceDialogOpen(true)
+          // setIsInvoiceDialogOpen(true) // Disabled: invoice counts are now automated via cron sync
         }
       }).catch(err => {
         console.error('Error fetching advisor status for auto-open:', err)
@@ -1570,7 +1570,7 @@ export default function DashboardPage() {
               {new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' })}
             </p>
           </div>
-          {canLogInvoices && (
+          {false && canLogInvoices && (
             <button
               onClick={() => setIsInvoiceDialogOpen(true)}
               style={{
