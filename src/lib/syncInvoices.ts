@@ -58,7 +58,7 @@ export async function runInvoiceSync(): Promise<{
       const json = await res.json()
       const count: number = json?.data?.count ?? 0
 
-      const { error: upsertError } = await supabase
+      const { data: upsertData, error: upsertError, status: upsertStatus, statusText: upsertStatusText } = await supabase
         .from('advisor_daily_invoices')
         .upsert(
           {
@@ -70,11 +70,14 @@ export async function runInvoiceSync(): Promise<{
           },
           { onConflict: 'advisor_code,invoice_date' }
         )
+        .select()
+
+      const debugInfo = `status=${upsertStatus} statusText=${upsertStatusText} dataLen=${upsertData ? upsertData.length : 'null'} data=${JSON.stringify(upsertData)}`
 
       if (upsertError) {
-        results.push({ advisorCode: advisor.advisorCode, count, error: upsertError.message })
+        results.push({ advisorCode: advisor.advisorCode, count, error: `${upsertError.message} | DEBUG: ${debugInfo}` })
       } else {
-        results.push({ advisorCode: advisor.advisorCode, count })
+        results.push({ advisorCode: advisor.advisorCode, count, error: `DEBUG: ${debugInfo}` })
       }
     } catch (err) {
       results.push({ advisorCode: advisor.advisorCode, count: 0, error: String(err) })
