@@ -19,6 +19,7 @@ type InvoiceRow = {
     invoice_date: string
     invoice_count: number
     created_at: string | null
+    updated_at: string | null
 }
 
 type AdvisorMapEntry = {

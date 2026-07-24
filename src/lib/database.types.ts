@@ -59,6 +59,7 @@ export type Database = {
           invoice_count: number
           invoice_date: string
           profile_id: string | null
+          updated_at: string
         }
         Insert: {
           advisor_code: string
@@ -68,6 +69,7 @@ export type Database = {
           invoice_count?: number
           invoice_date: string
           profile_id?: string | null
+          updated_at?: string
         }
         Update: {
           advisor_code?: string
@@ -77,6 +79,7 @@ export type Database = {
           invoice_count?: number
           invoice_date?: string
           profile_id?: string | null
+          updated_at?: string
         }
         Relationships: [
           {

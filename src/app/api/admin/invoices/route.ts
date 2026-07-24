@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
 
     const { data: invoices, error } = await serviceSupabase
         .from('advisor_daily_invoices')
-        .select('advisor_code, invoice_date, invoice_count, created_at')
+        .select('advisor_code, invoice_date, invoice_count, created_at, updated_at')
         .gte('invoice_date', dateFrom)
         .lte('invoice_date', dateTo)
         .order('invoice_date', { ascending: false })
@@ -58,12 +58,11 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
-    // Get last sync time — most recent created_at across all rows
     const lastSync = invoices && invoices.length > 0
         ? invoices.reduce<string | null>((latest, row) => {
-            if (!row.created_at) return latest
-            if (!latest) return row.created_at
-            return row.created_at > latest ? row.created_at : latest
+            if (!row.updated_at) return latest
+            if (!latest) return row.updated_at
+            return row.updated_at > latest ? row.updated_at : latest
         }, null)
         : null
 
