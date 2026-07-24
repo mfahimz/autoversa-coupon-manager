@@ -66,11 +66,18 @@ export async function GET(request: NextRequest) {
         }, null)
         : null
 
-    return NextResponse.json({
-        invoices: invoices ?? [],
-        advisorMap: ADVISOR_MAP,
-        lastSync,
-        backupUrlConfigured: !!process.env.BACKUP_SERVER_URL,
-        cronSecretConfigured: !!process.env.CRON_SECRET,
-    })
+  const { data: syncLogs } = await serviceSupabase
+    .from('invoice_sync_log')
+    .select('id, synced_at, success, error_message, results')
+    .order('synced_at', { ascending: false })
+    .limit(10)
+
+  return NextResponse.json({
+    invoices: invoices ?? [],
+    advisorMap: ADVISOR_MAP,
+    lastSync,
+    backupUrlConfigured: !!process.env.BACKUP_SERVER_URL,
+    cronSecretConfigured: !!process.env.CRON_SECRET,
+    syncLogs: syncLogs ?? [],
+  })
 }

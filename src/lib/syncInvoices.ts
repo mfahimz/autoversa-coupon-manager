@@ -19,15 +19,23 @@ export async function runInvoiceSync(): Promise<{
   date: string
   results: { advisorCode: string; count: number; error?: string }[]
 }> {
-  const backupUrl = process.env.BACKUP_SERVER_URL
-  if (!backupUrl) throw new Error('BACKUP_SERVER_URL not configured')
-
   const supabase = createClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
+  const backupUrl = process.env.BACKUP_SERVER_URL
   const today = getTodayDate()
+
+  if (!backupUrl) {
+    await supabase.from('invoice_sync_log').insert({
+      success: false,
+      error_message: 'BACKUP_SERVER_URL not configured',
+      results: null,
+    })
+    throw new Error('BACKUP_SERVER_URL not configured')
+  }
+
   const results: { advisorCode: string; count: number; error?: string }[] = []
 
   for (const advisor of ADVISOR_MAP) {
@@ -72,6 +80,18 @@ export async function runInvoiceSync(): Promise<{
       results.push({ advisorCode: advisor.advisorCode, count: 0, error: String(err) })
     }
   }
+
+  const hasErrors = results.some(r => r.error)
+  const errorSummary = results
+    .filter(r => r.error)
+    .map(r => `${r.advisorCode}: ${r.error}`)
+    .join('; ')
+
+  await supabase.from('invoice_sync_log').insert({
+    success: !hasErrors,
+    error_message: hasErrors ? errorSummary : null,
+    results: results as any,
+  })
 
   return { success: true, date: today, results }
 }

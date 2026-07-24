@@ -22,6 +22,14 @@ type InvoiceRow = {
     updated_at: string | null
 }
 
+type SyncLogEntry = {
+  id: string
+  synced_at: string
+  success: boolean
+  error_message: string | null
+  results: any
+}
+
 type AdvisorMapEntry = {
     advisorCode: string
     name: string
@@ -45,6 +53,13 @@ function getNextSync(lastSync: string | null): string {
   })
 }
 
+function isSyncOverdue(lastSync: string | null): boolean {
+  if (!lastSync) return true
+  const next = new Date(lastSync).getTime() + 5 * 60 * 1000
+  // Give a 10 minute grace period before flagging as overdue
+  return Date.now() > next + 10 * 60 * 1000
+}
+
 export default function AdminInvoicesPage() {
     const router = useRouter()
     const [invoices, setInvoices] = useState<InvoiceRow[]>([])
@@ -52,6 +67,7 @@ export default function AdminInvoicesPage() {
     const [lastSync, setLastSync] = useState<string | null>(null)
     const [backupUrlConfigured, setBackupUrlConfigured] = useState(false)
     const [cronSecretConfigured, setCronSecretConfigured] = useState(false)
+    const [syncLogs, setSyncLogs] = useState<SyncLogEntry[]>([])
     const [loading, setLoading] = useState(true)
     const [syncing, setSyncing] = useState(false)
     const [dateFrom, setDateFrom] = useState(new Date().toISOString().split('T')[0])
@@ -78,6 +94,7 @@ export default function AdminInvoicesPage() {
         setLastSync(json.lastSync ?? null)
         setBackupUrlConfigured(json.backupUrlConfigured)
         setCronSecretConfigured(json.cronSecretConfigured)
+        setSyncLogs(json.syncLogs ?? [])
         setLoading(false)
     }, [dateFrom, dateTo])
 
@@ -204,10 +221,17 @@ export default function AdminInvoicesPage() {
                                     {formatDateTime(lastSync)}
                                 </span>
                             </div>
-                            <div className="flex justify-between">
-                                <span className="text-[#666666]">Next Sync (approx)</span>
-                                <span className="font-medium text-[#1A1A1A]">{getNextSync(lastSync)}</span>
-                            </div>
+              <div className="flex justify-between items-center">
+                <span className="text-[#666666]">Next Sync (approx)</span>
+                <span className="font-medium text-[#1A1A1A] flex items-center gap-2">
+                  {getNextSync(lastSync)}
+                  {isSyncOverdue(lastSync) && (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-600 border border-red-200">
+                      Overdue — check sync
+                    </span>
+                  )}
+                </span>
+              </div>
                             <div className="flex justify-between items-center">
                                 <span className="text-[#666666]">Today's Total Invoices</span>
                                 <span className="text-2xl font-bold text-[#0074BD]">{totalToday}</span>
@@ -319,7 +343,48 @@ export default function AdminInvoicesPage() {
                         </table>
                     )}
                 </div>
+
+        {/* Recent Sync Attempts */}
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm mt-6">
+          <div className="px-5 py-4 border-b border-gray-100">
+            <h2 className="text-sm font-semibold text-[#162860] uppercase tracking-wide">Recent Sync Attempts</h2>
+          </div>
+          {syncLogs.length === 0 ? (
+            <div className="flex items-center justify-center py-10 text-sm text-[#666666]">
+              No sync attempts logged yet.
             </div>
-        </>
-    )
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 text-xs uppercase tracking-wide text-[#666666]">
+                  <th className="text-left px-5 py-3 font-medium">Time</th>
+                  <th className="text-left px-4 py-3 font-medium">Status</th>
+                  <th className="text-left px-4 py-3 font-medium">Details</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {syncLogs.map((log) => (
+                  <tr key={log.id} className="hover:bg-[#F7F7F7] transition-colors">
+                    <td className="px-5 py-3 text-[#1A1A1A]">{formatDateTime(log.synced_at)}</td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${
+                        log.success
+                          ? 'bg-green-50 text-green-700 border border-green-200'
+                          : 'bg-red-50 text-red-600 border border-red-200'
+                      }`}>
+                        {log.success ? 'Success' : 'Failed'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-[#666666] text-xs">
+                      {log.error_message ?? 'All advisors synced successfully'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </>
+  )
 }

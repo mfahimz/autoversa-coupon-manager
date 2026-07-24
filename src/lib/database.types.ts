@@ -616,6 +616,30 @@ export type Database = {
         }
         Relationships: []
       }
+      invoice_sync_log: {
+        Row: {
+          error_message: string | null
+          id: string
+          results: Json | null
+          success: boolean
+          synced_at: string
+        }
+        Insert: {
+          error_message?: string | null
+          id?: string
+          results?: Json | null
+          success: boolean
+          synced_at?: string
+        }
+        Update: {
+          error_message?: string | null
+          id?: string
+          results?: Json | null
+          success?: boolean
+          synced_at?: string
+        }
+        Relationships: []
+      }
       loyalty_customers: {
         Row: {
           car_make: string | null
@@ -1276,3 +1300,4 @@ export const Constants = {
     Enums: {},
   },
 } as const
+
