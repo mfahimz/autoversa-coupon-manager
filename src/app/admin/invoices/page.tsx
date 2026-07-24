@@ -36,12 +36,12 @@ function formatDateTime(iso: string | null): string {
 }
 
 function getNextSync(lastSync: string | null): string {
-    if (!lastSync) return '—'
-    const next = new Date(new Date(lastSync).getTime() + 15 * 60 * 1000)
-    return next.toLocaleString('en-GB', {
-        day: '2-digit', month: '2-digit', year: 'numeric',
-        hour: '2-digit', minute: '2-digit', second: '2-digit',
-    })
+  if (!lastSync) return '—'
+  const next = new Date(new Date(lastSync).getTime() + 15 * 60 * 1000)
+  return next.toLocaleString('en-GB', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  })
 }
 
 export default function AdminInvoicesPage() {
@@ -85,9 +85,7 @@ export default function AdminInvoicesPage() {
     async function handleSyncNow() {
         setSyncing(true)
         try {
-            const res = await fetch('/api/cron/sync-invoices', {
-                headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_CRON_SECRET}` },
-            })
+            const res = await fetch('/api/admin/sync-now', { method: 'POST' })
             const json = await res.json()
             if (json.success) {
                 toast.success('Sync completed successfully')
@@ -156,7 +154,7 @@ export default function AdminInvoicesPage() {
                             </div>
                             <div className="flex justify-between">
                                 <span className="text-[#666666]">Sync Frequency</span>
-                                <span className="font-medium text-[#1A1A1A]">Every 15 minutes</span>
+                                <span className="font-medium text-[#1A1A1A]">Every 15 minutes (GitHub Actions)</span>
                             </div>
                             <div className="flex justify-between">
                                 <span className="text-[#666666]">Method</span>

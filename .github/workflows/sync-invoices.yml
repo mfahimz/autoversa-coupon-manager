@@ -1,0 +1,16 @@
+name: Sync Invoices
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call sync-invoices endpoint
+        run: |
+          curl -X GET "https://autoversa.misalm.com/api/cron/sync-invoices" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            --fail
