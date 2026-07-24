@@ -15,7 +15,9 @@ const ADVISOR_MAP: { advisorCode: string; profileId: string; externalCode: numbe
 ]
 
 function getTodayDate(): string {
-    return new Date().toISOString().split('T')[0]
+    const d = new Date()
+    d.setDate(d.getDate() - 1)
+    return d.toISOString().split('T')[0]
 }
 
 export async function GET(request: NextRequest) {
