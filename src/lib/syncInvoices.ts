@@ -48,6 +48,7 @@ export async function runInvoiceSync(): Promise<{
           dateto: today,
           advisorcode: advisor.externalCode,
         }),
+        cache: 'no-store',
       })
 
       if (!res.ok) {
