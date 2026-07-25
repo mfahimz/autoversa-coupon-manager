@@ -93,5 +93,28 @@ export async function runInvoiceSync(): Promise<{
     results: results as any,
   })
 
+  // Keep only the most recent 25 sync log entries
+  const { data: recentLogs } = await supabase
+    .from('invoice_sync_log')
+    .select('id')
+    .order('synced_at', { ascending: false })
+    .limit(25)
+
+  if (recentLogs && recentLogs.length === 25) {
+    const cutoffId = recentLogs[recentLogs.length - 1].id
+    const { data: cutoffLog } = await supabase
+      .from('invoice_sync_log')
+      .select('synced_at')
+      .eq('id', cutoffId)
+      .single()
+
+    if (cutoffLog) {
+      await supabase
+        .from('invoice_sync_log')
+        .delete()
+        .lt('synced_at', cutoffLog.synced_at)
+    }
+  }
+
   return { success: true, date: today, results }
 }
