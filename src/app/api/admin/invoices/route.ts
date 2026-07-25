@@ -70,12 +70,14 @@ export async function GET(request: NextRequest) {
     .from('invoice_sync_log')
     .select('id, synced_at, success, error_message, results')
     .order('synced_at', { ascending: false })
-    .limit(10)
+    .limit(50)
+
+  const trueLastSync = syncLogs && syncLogs.length > 0 ? syncLogs[0].synced_at : lastSync
 
   return NextResponse.json({
     invoices: invoices ?? [],
     advisorMap: ADVISOR_MAP,
-    lastSync,
+    lastSync: trueLastSync,
     backupUrlConfigured: !!process.env.BACKUP_SERVER_URL,
     cronSecretConfigured: !!process.env.CRON_SECRET,
     syncLogs: syncLogs ?? [],

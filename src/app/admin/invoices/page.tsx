@@ -60,6 +60,8 @@ function isSyncOverdue(lastSync: string | null): boolean {
   return Date.now() > next + 10 * 60 * 1000
 }
 
+const ROWS_PER_PAGE = 10
+
 export default function AdminInvoicesPage() {
     const router = useRouter()
     const [invoices, setInvoices] = useState<InvoiceRow[]>([])
@@ -68,6 +70,8 @@ export default function AdminInvoicesPage() {
     const [backupUrlConfigured, setBackupUrlConfigured] = useState(false)
     const [cronSecretConfigured, setCronSecretConfigured] = useState(false)
     const [syncLogs, setSyncLogs] = useState<SyncLogEntry[]>([])
+    const [historyPage, setHistoryPage] = useState(1)
+    const [syncLogPage, setSyncLogPage] = useState(1)
     const [loading, setLoading] = useState(true)
     const [syncing, setSyncing] = useState(false)
     const [dateFrom, setDateFrom] = useState(new Date().toISOString().split('T')[0])
@@ -131,6 +135,8 @@ export default function AdminInvoicesPage() {
 
     // Get unique dates
     const dates = Array.from(new Set(invoices.map(r => r.invoice_date))).sort((a, b) => b.localeCompare(a))
+    const historyTotalPages = Math.ceil(dates.length / ROWS_PER_PAGE)
+    const paginatedDates = dates.slice((historyPage - 1) * ROWS_PER_PAGE, historyPage * ROWS_PER_PAGE)
 
     const advisorName = (code: string) =>
         advisorMap.find(a => a.advisorCode === code)?.name ?? code
@@ -302,7 +308,7 @@ export default function AdminInvoicesPage() {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-50">
-                                {dates.map(date => {
+                                {paginatedDates.map(date => {
                                     const rowTotal = advisorMap.reduce((sum, a) => {
                                         const inv = invoices.find(r => r.invoice_date === date && r.advisor_code === a.advisorCode)
                                         return sum + (inv?.invoice_count ?? 0)
@@ -342,7 +348,33 @@ export default function AdminInvoicesPage() {
                             </tbody>
                         </table>
                     )}
-                </div>
+          {historyTotalPages > 1 && (
+            <div className="flex items-center justify-between px-5 py-4 border-t border-gray-100">
+              <p className="text-sm text-[#666666]">
+                Showing {(historyPage - 1) * ROWS_PER_PAGE + 1}–{Math.min(historyPage * ROWS_PER_PAGE, dates.length)} of {dates.length} days
+              </p>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setHistoryPage(p => Math.max(1, p - 1))}
+                  disabled={historyPage === 1}
+                  className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg disabled:opacity-40 hover:bg-gray-50 transition-colors"
+                >
+                  Previous
+                </button>
+                <span className="px-3 py-1.5 text-sm text-[#1A1A1A]">
+                  Page {historyPage} of {historyTotalPages}
+                </span>
+                <button
+                  onClick={() => setHistoryPage(p => Math.min(historyTotalPages, p + 1))}
+                  disabled={historyPage === historyTotalPages}
+                  className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg disabled:opacity-40 hover:bg-gray-50 transition-colors"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Recent Sync Attempts */}
         <div className="rounded-xl border border-gray-200 bg-white shadow-sm mt-6">
@@ -363,7 +395,7 @@ export default function AdminInvoicesPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {syncLogs.map((log) => (
+                {syncLogs.slice((syncLogPage - 1) * ROWS_PER_PAGE, syncLogPage * ROWS_PER_PAGE).map((log) => (
                   <tr key={log.id} className="hover:bg-[#F7F7F7] transition-colors">
                     <td className="px-5 py-3 text-[#1A1A1A]">{formatDateTime(log.synced_at)}</td>
                     <td className="px-4 py-3">
@@ -382,6 +414,32 @@ export default function AdminInvoicesPage() {
                 ))}
               </tbody>
             </table>
+          )}
+          {syncLogs.length > ROWS_PER_PAGE && (
+            <div className="flex items-center justify-between px-5 py-4 border-t border-gray-100">
+              <p className="text-sm text-[#666666]">
+                Showing {(syncLogPage - 1) * ROWS_PER_PAGE + 1}–{Math.min(syncLogPage * ROWS_PER_PAGE, syncLogs.length)} of {syncLogs.length} attempts
+              </p>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setSyncLogPage(p => Math.max(1, p - 1))}
+                  disabled={syncLogPage === 1}
+                  className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg disabled:opacity-40 hover:bg-gray-50 transition-colors"
+                >
+                  Previous
+                </button>
+                <span className="px-3 py-1.5 text-sm text-[#1A1A1A]">
+                  Page {syncLogPage} of {Math.ceil(syncLogs.length / ROWS_PER_PAGE)}
+                </span>
+                <button
+                  onClick={() => setSyncLogPage(p => Math.min(Math.ceil(syncLogs.length / ROWS_PER_PAGE), p + 1))}
+                  disabled={syncLogPage === Math.ceil(syncLogs.length / ROWS_PER_PAGE)}
+                  className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg disabled:opacity-40 hover:bg-gray-50 transition-colors"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
           )}
         </div>
       </div>
