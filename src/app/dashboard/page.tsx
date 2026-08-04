@@ -354,6 +354,7 @@ export default function DashboardPage() {
   // Advisor self-view state
   const [advisorTotalVisits, setAdvisorTotalVisits] = useState(0)
   const [advisorTotalCommission, setAdvisorTotalCommission] = useState(0)
+  const [advisorTotalPaid, setAdvisorTotalPaid] = useState(0)
   const [advisorOfferGroups, setAdvisorOfferGroups] = useState<OfferGroup[]>([])
   const [advisorStagesByOffer, setAdvisorStagesByOffer] = useState<Record<string, any[]>>({})
   const [advisorBrandsByOffer, setAdvisorBrandsByOffer] = useState<Record<string, { loyalty_brand: string | null; referral_brand: string | null }>>({})
@@ -367,7 +368,7 @@ export default function DashboardPage() {
   const [adminPipelineStages, setAdminPipelineStages] = useState<Record<string, any[]>>({})
   const [adminPipelineBrands, setAdminPipelineBrands] = useState<Record<string, { loyalty_brand: string | null; referral_brand: string | null }>>({})
   const [adminPipelineLoading, setAdminPipelineLoading] = useState(true)
-  const [adminPipelineStats, setAdminPipelineStats] = useState({ totalIssued: 0, issuedThisMonth: 0, totalVisits: 0, totalCommission: 0 })
+  const [adminPipelineStats, setAdminPipelineStats] = useState({ totalIssued: 0, issuedThisMonth: 0, totalVisits: 0, totalCommission: 0, totalPaid: 0 })
   const [adminPipelineSearch, setAdminPipelineSearch] = useState('')
 
   // Dialog State
@@ -754,7 +755,19 @@ export default function DashboardPage() {
       } else {
         setAdvisorTotalVisits(0)
         setAdvisorTotalCommission(0)
+        setAdvisorTotalPaid(0)
         setAdvisorOfferGroups([])
+      }
+
+      const activeProfile = profileDataParam || profile
+      if (activeProfile?.advisor_code) {
+        const { data: payouts } = await supabase
+          .from('advisor_commission_payouts')
+          .select('payout_amount')
+          .eq('advisor_code', activeProfile.advisor_code)
+          .eq('status', 'COMPLETED')
+        const totalPaid = (payouts || []).reduce((acc: number, p: any) => acc + (Number(p.payout_amount) || 0), 0)
+        setAdvisorTotalPaid(totalPaid)
       }
 
       // Build the advisor's scope query on coupons
@@ -762,7 +775,6 @@ export default function DashboardPage() {
         .from('coupons')
         .select('id, coupon_type, status, issue_date, parent_coupon_id')
 
-      const activeProfile = profileDataParam || profile
       if (RECEPTIONIST_COUPON_CREATION_ENABLED && activeProfile?.advisor_code) {
         scopeQuery = scopeQuery.or(`issued_by.eq.${userId},and(advisor_code.eq.${activeProfile.advisor_code},created_by_receptionist.eq.true)`)
       } else {
@@ -799,7 +811,7 @@ export default function DashboardPage() {
       const { data: coupons } = await query
 
       if (!coupons || coupons.length === 0) {
-        setAdminPipelineStats({ totalIssued: 0, issuedThisMonth: 0, totalVisits: 0, totalCommission: 0 })
+        setAdminPipelineStats({ totalIssued: 0, issuedThisMonth: 0, totalVisits: 0, totalCommission: 0, totalPaid: 0 })
         setAdminPipelineGroups([])
         setAdminPipelineLoading(false)
         return
@@ -842,6 +854,12 @@ export default function DashboardPage() {
       let totalCommission = 0
       offerIds.forEach(oid => { totalCommission += (visitsPerOffer[oid] || 0) * (commissionByOffer[oid] || 0) })
 
+      const { data: payouts } = await supabase
+        .from('advisor_commission_payouts')
+        .select('payout_amount')
+        .eq('status', 'COMPLETED')
+      const totalPaid = (payouts || []).reduce((acc: number, p: any) => acc + (Number(p.payout_amount) || 0), 0)
+
       const issuedThisMonth = coupons.filter((c: any) => c.issue_date >= monthStart).length
 
       setAdminPipelineStats({
@@ -849,6 +867,7 @@ export default function DashboardPage() {
         issuedThisMonth,
         totalVisits: (visitedAppts || []).length,
         totalCommission,
+        totalPaid,
       })
 
     } catch (e) {
@@ -1518,20 +1537,21 @@ export default function DashboardPage() {
             <StatCard label="Coupons Issued" value={advisorScopedStats.couponsIssued} color="#7c3aed" loading={advisorLoading} icon="🎟️" subtitle={`${advisorScopedStats.customersServed} Mercedes + ${advisorScopedStats.customersServed} BMW`} />
             <StatCard label="BMW Referral Visits" value={advisorScopedStats.referralVisits} color="#16a34a" loading={advisorLoading} icon="🚗" subtitle="BMW coupons redeemed at service" />
             <StatCard label="Mercedes Redeemed" value={advisorScopedStats.redeemed} color="#9333ea" loading={advisorLoading} icon="✅" subtitle="Mercedes coupons marked redeemed" />
-            <StatCard label="Customers Issued Today" value={advisorScopedStats.issuedToday} color="#f59e0b" loading={advisorLoading} icon="📅" subtitle="Unique customers, not coupon rows" />
-            <StatCard label="Commission Earned" value={advisorTotalCommission} color="#f59e0b" loading={advisorLoading} format="currency" />
+            <StatCard label="Commission Earned" value={advisorTotalCommission} color="#0074BD" loading={advisorLoading} format="currency" icon="💰" />
+            <StatCard label="Commission Paid Out" value={advisorTotalPaid} color="#16a34a" loading={advisorLoading} format="currency" icon="✅" />
+            <StatCard label="Pending Balance" value={Math.max(0, advisorTotalCommission - advisorTotalPaid)} color={advisorTotalCommission - advisorTotalPaid > 0 ? '#f59e0b' : '#64748B'} loading={advisorLoading} format="currency" icon="⏳" />
           </div>
 
-          {/* Advisor match score leaderboard */}
-          {renderAdvisorLeaderboardSection()}
-
           {/* Quick actions */}
-          <div style={{ display: 'flex', gap: '12px', marginBottom: '36px' }}>
+          <div style={{ display: 'flex', gap: '12px', marginBottom: '36px', flexWrap: 'wrap' }}>
             <button onClick={() => router.push('/create-coupon')} style={{ padding: '12px 24px', backgroundColor: '#0074BD', color: '#FFFFFF', border: 'none', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>
               + Create Coupon
             </button>
             <button onClick={() => router.push('/coupons')} style={{ padding: '12px 24px', backgroundColor: '#FFFFFF', color: '#162860', border: '1.5px solid #162860', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>
               View My Coupons
+            </button>
+            <button onClick={() => router.push('/admin/payouts')} style={{ padding: '12px 24px', backgroundColor: '#162860', color: '#FFFFFF', border: 'none', borderRadius: '10px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }}>
+              View Payout Statement
             </button>
           </div>
 
@@ -1693,7 +1713,9 @@ export default function DashboardPage() {
                     { label: 'Coupons Issued', value: adminPipelineStats.totalIssued, color: '#162860', format: 'number' as const },
                     { label: 'Issued This Month', value: adminPipelineStats.issuedThisMonth, color: '#0074BD', format: 'number' as const },
                     { label: 'Referral Visits', value: adminPipelineStats.totalVisits, color: '#16a34a', format: 'number' as const },
-                    { label: 'Commission Earned', value: adminPipelineStats.totalCommission, color: '#f59e0b', format: 'currency' as const },
+                    { label: 'Commission Earned', value: adminPipelineStats.totalCommission, color: '#0074BD', format: 'currency' as const },
+                    { label: 'Commission Paid Out', value: adminPipelineStats.totalPaid, color: '#16a34a', format: 'currency' as const },
+                    { label: 'Pending Balance', value: Math.max(0, adminPipelineStats.totalCommission - adminPipelineStats.totalPaid), color: adminPipelineStats.totalCommission - adminPipelineStats.totalPaid > 0 ? '#f59e0b' : '#64748B', format: 'currency' as const },
                   ].map(s => {
                     const rgb = hexToRgbStr(s.color)
                     return (
