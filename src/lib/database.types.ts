@@ -50,6 +50,75 @@ export type Database = {
         }
         Relationships: []
       }
+      advisor_commission_payouts: {
+        Row: {
+          advisor_code: string
+          advisor_name: string
+          created_at: string
+          id: string
+          notes: string | null
+          paid_by: string | null
+          payment_date: string
+          payment_method: string
+          payout_amount: number
+          period_end_date: string | null
+          period_start_date: string | null
+          profile_id: string | null
+          reference_number: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          advisor_code: string
+          advisor_name: string
+          created_at?: string
+          id?: string
+          notes?: string | null
+          paid_by?: string | null
+          payment_date?: string
+          payment_method?: string
+          payout_amount: number
+          period_end_date?: string | null
+          period_start_date?: string | null
+          profile_id?: string | null
+          reference_number?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          advisor_code?: string
+          advisor_name?: string
+          created_at?: string
+          id?: string
+          notes?: string | null
+          paid_by?: string | null
+          payment_date?: string
+          payment_method?: string
+          payout_amount?: number
+          period_end_date?: string | null
+          period_start_date?: string | null
+          profile_id?: string | null
+          reference_number?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "advisor_commission_payouts_paid_by_fkey"
+            columns: ["paid_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "advisor_commission_payouts_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       advisor_daily_invoices: {
         Row: {
           advisor_code: string

@@ -102,6 +102,14 @@ export const PERMISSIONS_REGISTRY: PageDef[] = [
             { resource: 'action:emirate_config:update', label: 'Update emirate categories' },
         ],
     },
+    {
+        resource: 'page:payouts',
+        label: 'Commission Payouts',
+        actions: [
+            { resource: 'action:payout:create', label: 'Record advisor commission payout' },
+            { resource: 'action:payout:delete', label: 'Delete payout record' },
+        ],
+    },
 ]
 
 // All resources flat — used for seeding/saving

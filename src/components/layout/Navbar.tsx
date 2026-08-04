@@ -17,6 +17,7 @@ const ALL_NAV_ITEMS = [
 
 const ADMIN_DROPDOWN = [
     { label: 'Users', href: '/users', resource: 'page:users' },
+    { label: 'Commission Payouts', href: '/admin/payouts', resource: 'page:payouts' },
     { label: 'Settings', href: '/admin/settings', resource: 'page:admin' },
     { label: 'Invoice Sync', href: '/admin/invoices', resource: 'page:admin-invoices' },
 ]
