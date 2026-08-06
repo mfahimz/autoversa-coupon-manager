@@ -1203,6 +1203,7 @@ export type Database = {
       get_dashboard_stats: {
         Args: never
         Returns: {
+          customers_served_this_month: number
           redeemed_coupons: number
           referral_visits: number
           today_coupons: number
@@ -1369,4 +1370,3 @@ export const Constants = {
     Enums: {},
   },
 } as const
-

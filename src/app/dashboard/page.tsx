@@ -33,6 +33,7 @@ interface DashboardStats {
   totalCouponRows: number
   redeemedCoupons: number
   todaysCoupons: number
+  customersServedThisMonth: number
   totalAdvisors: number
   referralVisits: number
 }
@@ -108,6 +109,7 @@ async function computeScopedCouponStats(supabase: any, query: any) {
 
   const stats = {
     customersServed: 0,
+    customersServedThisMonth: 0,
     couponsIssued: 0,
     referralVisits: 0,
     redeemed: 0,
@@ -120,12 +122,17 @@ async function computeScopedCouponStats(supabase: any, query: any) {
 
   stats.couponsIssued = coupons.length
 
-  const todayStr = new Date().toISOString().split('T')[0]
+  const now = new Date()
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
+  const todayStr = now.toISOString().split('T')[0]
   const referralIds: string[] = []
 
   coupons.forEach((c: any) => {
     if (c.coupon_type === 'LOYALTY') {
       stats.customersServed++
+      if (c.issue_date && c.issue_date >= monthStart) {
+        stats.customersServedThisMonth++
+      }
       if (c.status === 'REDEEMED') {
         stats.redeemed++
       }
@@ -305,13 +312,14 @@ export default function DashboardPage() {
   const supabase = createClient()
 
   const [profile, setProfile] = useState<Profile | null>(null)
-  const [stats, setStats] = useState<DashboardStats>({ totalCoupons: 0, totalCouponRows: 0, redeemedCoupons: 0, todaysCoupons: 0, totalAdvisors: 0, referralVisits: 0 })
+  const [stats, setStats] = useState<DashboardStats>({ totalCoupons: 0, totalCouponRows: 0, redeemedCoupons: 0, todaysCoupons: 0, customersServedThisMonth: 0, totalAdvisors: 0, referralVisits: 0 })
   const [recentCoupons, setRecentCoupons] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
   // Scoped stats for advisor & receptionist
   const [advisorScopedStats, setAdvisorScopedStats] = useState({
     customersServed: 0,
+    customersServedThisMonth: 0,
     couponsIssued: 0,
     referralVisits: 0,
     redeemed: 0,
@@ -319,6 +327,7 @@ export default function DashboardPage() {
   })
   const [receptionistScopedStats, setReceptionistScopedStats] = useState({
     customersServed: 0,
+    customersServedThisMonth: 0,
     couponsIssued: 0,
     referralVisits: 0,
     redeemed: 0,
@@ -484,6 +493,7 @@ export default function DashboardPage() {
         totalCouponRows: statsRow?.total_coupon_rows || 0,
         redeemedCoupons: statsRow?.redeemed_coupons || 0,
         todaysCoupons: statsRow?.today_coupons || 0,
+        customersServedThisMonth: statsRow?.customers_served_this_month || 0,
         totalAdvisors: statsRow?.total_advisors || 0,
         referralVisits: statsRow?.referral_visits || 0,
       })
@@ -496,7 +506,7 @@ export default function DashboardPage() {
             .from('profiles')
             .select('id, full_name')
             .in('id', recentIssuerIds)
-          ;(issuerProfiles || []).forEach((p: any) => issuerNameMap.set(p.id, p.full_name || 'Unknown'))
+            ; (issuerProfiles || []).forEach((p: any) => issuerNameMap.set(p.id, p.full_name || 'Unknown'))
         }
         const recentWithIssuer = recent.map((c: any) => ({
           ...c,
@@ -550,22 +560,22 @@ export default function DashboardPage() {
 
     const visitedCouponIds = new Set((visitedAppts || []).map((a: any) => a.coupon_id))
     const visitedCountByLoyalty: Record<string, number> = {}
-    ;(allReferralCoupons || []).forEach((b: any) => {
-      if (visitedCouponIds.has(b.id))
-        visitedCountByLoyalty[b.parent_coupon_id] = (visitedCountByLoyalty[b.parent_coupon_id] || 0) + 1
-    })
+      ; (allReferralCoupons || []).forEach((b: any) => {
+        if (visitedCouponIds.has(b.id))
+          visitedCountByLoyalty[b.parent_coupon_id] = (visitedCountByLoyalty[b.parent_coupon_id] || 0) + 1
+      })
 
     const brandsMap: Record<string, { loyalty_brand: string | null; referral_brand: string | null }> = {}
-    ;(offersData || []).forEach((o: any) => { brandsMap[o.id] = { loyalty_brand: o.loyalty_brand, referral_brand: o.referral_brand } })
+      ; (offersData || []).forEach((o: any) => { brandsMap[o.id] = { loyalty_brand: o.loyalty_brand, referral_brand: o.referral_brand } })
 
     const stagesByOfferMap: Record<string, any[]> = {}
-    ;(stagesData || []).forEach((s: any) => {
-      if (!stagesByOfferMap[s.offer_id]) stagesByOfferMap[s.offer_id] = []
-      stagesByOfferMap[s.offer_id].push(s)
-    })
+      ; (stagesData || []).forEach((s: any) => {
+        if (!stagesByOfferMap[s.offer_id]) stagesByOfferMap[s.offer_id] = []
+        stagesByOfferMap[s.offer_id].push(s)
+      })
 
     const waByOfferAndStage: Record<string, string> = {}
-    ;(waTemplates || []).forEach((t: any) => { waByOfferAndStage[`${t.offer_id}_${t.trigger_type}`] = t.message_body })
+      ; (waTemplates || []).forEach((t: any) => { waByOfferAndStage[`${t.offer_id}_${t.trigger_type}`] = t.message_body })
 
     const rows: LoyaltyCouponRow[] = coupons.map((c: any) => {
       const stages = stagesByOfferMap[c.offer_id] || []
@@ -691,6 +701,7 @@ export default function DashboardPage() {
         setReceptionistBrandsByOffer({})
         setReceptionistScopedStats({
           customersServed: 0,
+          customersServedThisMonth: 0,
           couponsIssued: 0,
           referralVisits: 0,
           redeemed: 0,
@@ -740,12 +751,12 @@ export default function DashboardPage() {
           : { data: [] }
 
         const commissionByOffer: Record<string, number> = {}
-        ;(offersData || []).forEach((o: any) => { commissionByOffer[o.id] = o.commission_amount || 0 })
+          ; (offersData || []).forEach((o: any) => { commissionByOffer[o.id] = o.commission_amount || 0 })
 
         const visitsPerOffer: Record<string, number> = {}
-        ;(visitedAppts || []).forEach((a: any) => {
-          if (a.offer_id) visitsPerOffer[a.offer_id] = (visitsPerOffer[a.offer_id] || 0) + 1
-        })
+          ; (visitedAppts || []).forEach((a: any) => {
+            if (a.offer_id) visitsPerOffer[a.offer_id] = (visitsPerOffer[a.offer_id] || 0) + 1
+          })
 
         let totalCommission = 0
         offerIds.forEach(oid => { totalCommission += (visitsPerOffer[oid] || 0) * (commissionByOffer[oid] || 0) })
@@ -844,12 +855,12 @@ export default function DashboardPage() {
         : { data: [] }
 
       const commissionByOffer: Record<string, number> = {}
-      ;(offersData || []).forEach((o: any) => { commissionByOffer[o.id] = o.commission_amount || 0 })
+        ; (offersData || []).forEach((o: any) => { commissionByOffer[o.id] = o.commission_amount || 0 })
 
       const visitsPerOffer: Record<string, number> = {}
-      ;(visitedAppts || []).forEach((a: any) => {
-        if (a.offer_id) visitsPerOffer[a.offer_id] = (visitsPerOffer[a.offer_id] || 0) + 1
-      })
+        ; (visitedAppts || []).forEach((a: any) => {
+          if (a.offer_id) visitsPerOffer[a.offer_id] = (visitsPerOffer[a.offer_id] || 0) + 1
+        })
 
       let totalCommission = 0
       offerIds.forEach(oid => { totalCommission += (visitsPerOffer[oid] || 0) * (commissionByOffer[oid] || 0) })
@@ -1412,8 +1423,8 @@ export default function DashboardPage() {
 
               {/* KPI cards */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '28px' }}>
-                <StatCard label="Customers Served" value={receptionistScopedStats.customersServed} color="#0074BD" loading={receptionistCommissionLoading} icon="👥" subtitle="Unique customers issued Mercedes coupons" />
-                <StatCard label="Coupons Issued" value={receptionistScopedStats.couponsIssued} color="#7c3aed" loading={receptionistCommissionLoading} icon="🎟️" subtitle={`${receptionistScopedStats.customersServed} Mercedes + ${receptionistScopedStats.customersServed} BMW`} />
+                <StatCard label="Total Customers Served" value={receptionistScopedStats.customersServed} color="#0074BD" loading={receptionistCommissionLoading} icon="👥" subtitle="Unique customers issued Mercedes coupons" />
+                <StatCard label="Customers Served This Month" value={receptionistScopedStats.customersServedThisMonth} color="#7c3aed" loading={receptionistCommissionLoading} icon="📆" subtitle="Unique customers issued Mercedes coupons this month" />
                 <StatCard label="BMW Referral Visits" value={receptionistScopedStats.referralVisits} color="#16a34a" loading={receptionistCommissionLoading} icon="🚗" subtitle="BMW coupons redeemed at service" />
                 <StatCard label="Mercedes Redeemed" value={receptionistScopedStats.redeemed} color="#9333ea" loading={receptionistCommissionLoading} icon="✅" subtitle="Mercedes coupons marked redeemed" />
                 <StatCard label="Customers Issued Today" value={receptionistScopedStats.issuedToday} color="#f59e0b" loading={receptionistCommissionLoading} icon="📅" subtitle="Unique customers, not coupon rows" />
@@ -1533,8 +1544,8 @@ export default function DashboardPage() {
 
           {/* KPI cards */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '28px' }}>
-            <StatCard label="Customers Served" value={advisorScopedStats.customersServed} color="#0074BD" loading={advisorLoading} icon="👥" subtitle="Unique customers issued Mercedes coupons" />
-            <StatCard label="Coupons Issued" value={advisorScopedStats.couponsIssued} color="#7c3aed" loading={advisorLoading} icon="🎟️" subtitle={`${advisorScopedStats.customersServed} Mercedes + ${advisorScopedStats.customersServed} BMW`} />
+            <StatCard label="Total Customers Served" value={advisorScopedStats.customersServed} color="#0074BD" loading={advisorLoading} icon="👥" subtitle="Unique customers issued Mercedes coupons" />
+            <StatCard label="Customers Served This Month" value={advisorScopedStats.customersServedThisMonth} color="#7c3aed" loading={advisorLoading} icon="📆" subtitle="Unique customers issued Mercedes coupons this month" />
             <StatCard label="BMW Referral Visits" value={advisorScopedStats.referralVisits} color="#16a34a" loading={advisorLoading} icon="🚗" subtitle="BMW coupons redeemed at service" />
             <StatCard label="Mercedes Redeemed" value={advisorScopedStats.redeemed} color="#9333ea" loading={advisorLoading} icon="✅" subtitle="Mercedes coupons marked redeemed" />
             <StatCard label="Commission Earned" value={advisorTotalCommission} color="#0074BD" loading={advisorLoading} format="currency" icon="💰" />
@@ -1612,8 +1623,8 @@ export default function DashboardPage() {
 
         {/* Stats grid: 5 uniform cards */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '32px' }}>
-          <StatCard label="Customers Served" value={stats.totalCoupons} color="#0074BD" loading={loading} icon="👥" subtitle="Unique customers issued Mercedes coupons" />
-          <StatCard label="Coupons Issued" value={stats.totalCouponRows} color="#7c3aed" loading={loading} icon="🎟️" subtitle={`${stats.totalCoupons} Mercedes + ${stats.totalCoupons} BMW`} />
+          <StatCard label="Total Customers Served" value={stats.totalCoupons} color="#0074BD" loading={loading} icon="👥" subtitle="Unique customers issued Mercedes coupons" />
+          <StatCard label="Customers Served This Month" value={stats.customersServedThisMonth} color="#7c3aed" loading={loading} icon="📆" subtitle="Unique customers issued Mercedes coupons this month" />
           <StatCard label="BMW Referral Visits" value={stats.referralVisits} color="#16a34a" loading={loading} icon="🚗" subtitle="BMW coupons redeemed at service" />
           <StatCard label="Mercedes Redeemed" value={stats.redeemedCoupons} color="#9333ea" loading={loading} icon="✅" subtitle="Mercedes coupons marked redeemed" />
           <StatCard label="Customers Issued Today" value={stats.todaysCoupons} color="#f59e0b" loading={loading} icon="📅" subtitle="Unique customers, not coupon rows" />
