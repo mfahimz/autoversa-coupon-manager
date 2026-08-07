@@ -5,6 +5,7 @@ import { createBrowserClient } from '@supabase/ssr'
 import { Database } from '@/lib/database.types'
 import { toast } from 'sonner'
 import Navbar from '@/components/layout/Navbar'
+import { loadPermissionsForRole, checkPermission, PermissionsMap } from '@/lib/permissions'
 
 export const dynamic = 'force-dynamic'
 
@@ -47,10 +48,24 @@ const STATUS_COLORS: Record<string, string> = {
 }
 
 const PAGE_SIZE = 20
+const RESURFACE_DAYS = 21
 
 function daysSince(dateStr: string | null): number {
     if (!dateStr) return 0
     return Math.floor((Date.now() - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24))
+}
+
+function isResurfaced(latestFollowUp: FollowUpCoupon['latest_follow_up']): boolean {
+    if (!latestFollowUp) return false
+    if (latestFollowUp.follow_up_status === 'pending') return false
+    const daysSinceAction = Math.floor((Date.now() - new Date(latestFollowUp.updated_at).getTime()) / (1000 * 60 * 60 * 24))
+    return daysSinceAction >= RESURFACE_DAYS
+}
+
+function isActiveTier(coupon: FollowUpCoupon): boolean {
+    const status = coupon.latest_follow_up?.follow_up_status ?? 'pending'
+    if (status === 'pending') return true
+    return isResurfaced(coupon.latest_follow_up)
 }
 
 function buildWhatsAppMessage(coupon: FollowUpCoupon): string {
@@ -80,6 +95,7 @@ export default function FollowUpPage() {
     const [loading, setLoading] = useState(true)
     const [userRole, setUserRole] = useState<string | null>(null)
     const [userId, setUserId] = useState<string | null>(null)
+    const [permissions, setPermissions] = useState<PermissionsMap>({})
     const [issuedByFilter, setIssuedByFilter] = useState<string>('')
     const [statusFilter, setStatusFilter] = useState<string>('')
     const [advisors, setAdvisors] = useState<{ id: string; full_name: string }[]>([])
@@ -88,23 +104,29 @@ export default function FollowUpPage() {
 
     const ADVISOR_ROLES = ['SERVICE_ADVISOR', 'BMW_SERVICE_ADVISOR']
 
-    const loadData = useCallback(async () => {
-        setLoading(true)
+    const loadData = useCallback(async (isBackground = false) => {
+        if (!isBackground) setLoading(true)
         const params = new URLSearchParams()
         if (issuedByFilter) params.set('issuedBy', issuedByFilter)
 
         const res = await fetch(`/api/follow-up/coupons?${params.toString()}`)
         if (!res.ok) {
             toast.error('Failed to load follow-up queue')
-            setLoading(false)
+            if (!isBackground) setLoading(false)
             return
         }
         const json = await res.json()
         setCoupons(json.data ?? [])
         setUserRole(json.userRole)
         setUserId(json.userId)
-        setLoading(false)
-        setPage(1)
+        if (json.userRole) {
+            const perms = await loadPermissionsForRole(json.userRole)
+            setPermissions(perms)
+        }
+        if (!isBackground) {
+            setLoading(false)
+            setPage(1)
+        }
     }, [issuedByFilter])
 
     useEffect(() => {
@@ -124,59 +146,121 @@ export default function FollowUpPage() {
         }
     }, [userRole])
 
+    const canSendReminder = checkPermission(permissions, userRole || '', 'action:follow_up:send_reminder', 'action')
+    const canDecline = checkPermission(permissions, userRole || '', 'action:follow_up:decline', 'action')
+
     async function handleSendReminder(coupon: FollowUpCoupon) {
         if (!userId) return
+        if (!canSendReminder) {
+            toast.error('You do not have permission to send follow-up reminders.')
+            return
+        }
         setUpdatingId(coupon.id)
 
-        const { error } = await supabase.from('coupon_follow_ups').insert({
-            coupon_id: coupon.id,
-            followed_up_by: userId,
-            follow_up_status: 'contacted',
+        const res = await fetch('/api/follow-up/record', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                coupon_id: coupon.id,
+                follow_up_status: 'contacted',
+            }),
         })
 
-        if (error) {
-            toast.error('Failed to record follow-up')
+        if (!res.ok) {
+            if (res.status === 403) {
+                toast.error("You don't have permission to do this")
+            } else {
+                toast.error('Failed to record follow-up')
+            }
             setUpdatingId(null)
             return
         }
 
+        const inserted = await res.json()
+
         window.open(buildWhatsAppMessage(coupon), '_blank')
         toast.success(`Follow-up recorded for ${coupon.plate_number}`)
+
+        setCoupons((prev) =>
+            prev.map((c) =>
+                c.id === coupon.id
+                    ? {
+                          ...c,
+                          latest_follow_up: inserted,
+                          follow_up_count: c.follow_up_count + 1,
+                      }
+                    : c
+            )
+        )
         setUpdatingId(null)
-        loadData()
+        loadData(true)
     }
 
     async function handleStatusChange(coupon: FollowUpCoupon, newStatus: string) {
         if (!userId) return
+        if (!canDecline) {
+            toast.error('You do not have permission to mark follow-up as declined.')
+            return
+        }
         setUpdatingId(coupon.id)
 
-        const { error } = await supabase.from('coupon_follow_ups').insert({
-            coupon_id: coupon.id,
-            followed_up_by: userId,
-            follow_up_status: newStatus,
+        const res = await fetch('/api/follow-up/record', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                coupon_id: coupon.id,
+                follow_up_status: newStatus,
+            }),
         })
 
-        if (error) {
-            toast.error('Failed to update status')
+        if (!res.ok) {
+            if (res.status === 403) {
+                toast.error("You don't have permission to do this")
+            } else {
+                toast.error('Failed to update status')
+            }
             setUpdatingId(null)
             return
         }
 
+        const inserted = await res.json()
+
         toast.success('Status updated')
+
+        setCoupons((prev) =>
+            prev.map((c) =>
+                c.id === coupon.id
+                    ? {
+                          ...c,
+                          latest_follow_up: inserted,
+                          follow_up_count: c.follow_up_count + 1,
+                      }
+                    : c
+            )
+        )
         setUpdatingId(null)
-        loadData()
+        loadData(true)
     }
 
     const isAdvisorRole = userRole ? ADVISOR_ROLES.includes(userRole) : false
 
-    // Filter then sort by days descending (most overdue first)
     const filtered = coupons
         .filter((c) => {
             if (!statusFilter) return true
             const latest = c.latest_follow_up?.follow_up_status ?? 'pending'
             return latest === statusFilter
         })
-        .sort((a, b) => daysSince(b.created_at) - daysSince(a.created_at))
+        .sort((a, b) => {
+            const aActive = isActiveTier(a)
+            const bActive = isActiveTier(b)
+            if (aActive !== bActive) return aActive ? -1 : 1
+            if (aActive) {
+                return daysSince(b.created_at) - daysSince(a.created_at)
+            }
+            const aTime = a.latest_follow_up ? new Date(a.latest_follow_up.updated_at).getTime() : 0
+            const bTime = b.latest_follow_up ? new Date(b.latest_follow_up.updated_at).getTime() : 0
+            return bTime - aTime
+        })
 
     const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
     const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
@@ -258,9 +342,6 @@ export default function FollowUpPage() {
                                 <tbody className="divide-y divide-gray-100">
                                     {paginated.map((coupon) => {
                                         const latestStatus = coupon.latest_follow_up?.follow_up_status ?? 'pending'
-                                        const lastContactDate = coupon.latest_follow_up?.updated_at
-                                            ? new Date(coupon.latest_follow_up.updated_at).toLocaleDateString('en-GB')
-                                            : '—'
                                         const days = daysSince(coupon.created_at)
                                         const isUpdating = updatingId === coupon.id
 
@@ -285,22 +366,44 @@ export default function FollowUpPage() {
                                                         <span className="font-medium text-[#1A1A1A]">{coupon.follow_up_count}×</span>
                                                     )}
                                                 </td>
-                                                <td className="px-4 py-3.5 text-[#666666] text-xs">{lastContactDate}</td>
+                                                <td className="px-4 py-3.5 text-[#666666] text-xs">
+                                                    {coupon.latest_follow_up ? (
+                                                        <span title={new Date(coupon.latest_follow_up.updated_at).toLocaleDateString('en-GB')}>
+                                                            {(() => {
+                                                                const daysSinceAction = Math.floor((Date.now() - new Date(coupon.latest_follow_up.updated_at).getTime()) / (1000 * 60 * 60 * 24))
+                                                                if (daysSinceAction === 0) return 'Today'
+                                                                if (daysSinceAction === 1) return '1 day ago'
+                                                                return `${daysSinceAction} days ago`
+                                                            })()}
+                                                        </span>
+                                                    ) : (
+                                                        '—'
+                                                    )}
+                                                </td>
                                                 <td className="px-4 py-3.5">
-                                                    <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${STATUS_COLORS[latestStatus] ?? STATUS_COLORS.pending}`}>
-                                                        {STATUS_LABELS[latestStatus] ?? 'Pending'}
-                                                    </span>
+                                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                                        <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${STATUS_COLORS[latestStatus] ?? STATUS_COLORS.pending}`}>
+                                                            {STATUS_LABELS[latestStatus] ?? 'Pending'}
+                                                        </span>
+                                                        {isResurfaced(coupon.latest_follow_up) && (
+                                                            <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-orange-50 text-orange-700 border border-orange-200">
+                                                                Follow-up again
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                 </td>
                                                 <td className="px-4 py-3.5">
                                                     <div className="flex items-center gap-2">
-                                                        <button
-                                                            onClick={() => handleSendReminder(coupon)}
-                                                            disabled={isUpdating}
-                                                            className="px-3 py-1.5 bg-[#0074BD] text-white text-xs font-medium rounded-lg hover:bg-[#005a94] disabled:opacity-50 transition-colors whitespace-nowrap"
-                                                        >
-                                                            Send Reminder
-                                                        </button>
-                                                        {latestStatus !== 'declined' && (
+                                                        {canSendReminder && (
+                                                            <button
+                                                                onClick={() => handleSendReminder(coupon)}
+                                                                disabled={isUpdating}
+                                                                className="px-3 py-1.5 bg-[#0074BD] text-white text-xs font-medium rounded-lg hover:bg-[#005a94] disabled:opacity-50 transition-colors whitespace-nowrap"
+                                                            >
+                                                                Send Reminder
+                                                            </button>
+                                                        )}
+                                                        {canDecline && latestStatus !== 'declined' && (
                                                             <button
                                                                 onClick={() => handleStatusChange(coupon, 'declined')}
                                                                 disabled={isUpdating}
@@ -308,6 +411,9 @@ export default function FollowUpPage() {
                                                             >
                                                                 Declined
                                                             </button>
+                                                        )}
+                                                        {!canSendReminder && !canDecline && (
+                                                            <span className="text-xs text-gray-400 font-medium">—</span>
                                                         )}
                                                     </div>
                                                 </td>

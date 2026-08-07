@@ -55,6 +55,19 @@ export const PERMISSIONS_REGISTRY: PageDef[] = [
         ],
     },
     {
+        resource: 'page:follow-up',
+        label: 'Coupon Follow-Up',
+        actions: [
+            { resource: 'action:follow_up:send_reminder', label: 'Send WhatsApp reminder' },
+            { resource: 'action:follow_up:decline', label: 'Mark coupon as declined' },
+        ],
+    },
+    {
+        resource: 'page:admin-invoices',
+        label: 'Invoice Sync',
+        actions: [],
+    },
+    {
         resource: 'page:offers',
         label: 'Offers',
         actions: [
