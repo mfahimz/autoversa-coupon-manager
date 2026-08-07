@@ -85,6 +85,7 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }
 }
 
 const PAGE_SIZE = 10
+const PRIVILEGED_ROLES_2012_BYPASS = ['ADMIN', 'CEO', 'ASSISTANT_GENERAL_MANAGER', 'MANAGER']
 
 // ─── Shared styles ────────────────────────────────────────────────────────────
 
@@ -451,7 +452,8 @@ export default function AppointmentsPage() {
       newErrors.vehicleYear = 'Vehicle year is required'
     } else {
       const yr = Number(vehicleYear)
-      if (yr < 2012) newErrors.vehicleYear = 'Vehicle must be 2012 or newer'
+      const isPrivileged = PRIVILEGED_ROLES_2012_BYPASS.includes(profile?.user_role)
+      if (!isPrivileged && yr < 2012) newErrors.vehicleYear = 'Vehicle must be 2012 or newer'
       else if (yr > new Date().getFullYear()) newErrors.vehicleYear = 'Invalid vehicle year'
     }
 
@@ -1048,7 +1050,7 @@ export default function AppointmentsPage() {
                 </div>
 
                 <div style={{ marginBottom: '16px' }}>
-                  <label style={labelStyle}>Vehicle Year * (2012 or newer)</label>
+                  <label style={labelStyle}>Vehicle Year * {!PRIVILEGED_ROLES_2012_BYPASS.includes(profile?.user_role) && '(2012 or newer)'}</label>
                   <input
                     style={inputStyle}
                     value={vehicleYear}
