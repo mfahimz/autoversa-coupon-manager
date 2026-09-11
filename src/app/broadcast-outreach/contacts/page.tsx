@@ -32,6 +32,28 @@ function relativeDate(dateStr: string) {
     return `${days} days ago`
 }
 
+function toPngBlob(sourceBlob: Blob): Promise<Blob> {
+    return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(sourceBlob)
+        const img = new Image()
+        img.onload = () => {
+            const canvas = document.createElement('canvas')
+            canvas.width = img.naturalWidth
+            canvas.height = img.naturalHeight
+            const ctx = canvas.getContext('2d')
+            if (!ctx) { URL.revokeObjectURL(url); reject(new Error('Canvas not supported')); return }
+            ctx.drawImage(img, 0, 0)
+            canvas.toBlob(blob => {
+                URL.revokeObjectURL(url)
+                if (blob) resolve(blob)
+                else reject(new Error('Failed to convert image to PNG'))
+            }, 'image/png')
+        }
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Failed to load image')) }
+        img.src = url
+    })
+}
+
 function formatCountdown(ms: number) {
     const totalSeconds = Math.max(0, Math.ceil(ms / 1000))
     const minutes = Math.floor(totalSeconds / 60)
@@ -124,10 +146,12 @@ export default function BroadcastOutreachContactsPage() {
         try {
             const response = await fetch(settings.image_url)
             if (!response.ok) throw new Error('Image could not be fetched')
-            const blob = await response.blob()
-            await navigator.clipboard.write([new ClipboardItem({ [blob.type || 'image/png']: blob })])
+            const sourceBlob = await response.blob()
+            const pngBlob = await toPngBlob(sourceBlob)
+            await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })])
             toast.success('Broadcast image copied to clipboard')
-        } catch {
+        } catch (error) {
+            console.error('Copy image failed', error)
             toast.error('Unable to copy the image. Your browser may block clipboard image access.')
         } finally { setCopying(false) }
     }
