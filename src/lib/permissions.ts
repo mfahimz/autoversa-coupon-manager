@@ -63,6 +63,20 @@ export const PERMISSIONS_REGISTRY: PageDef[] = [
         ],
     },
     {
+        resource: 'page:broadcast-outreach-overview',
+        label: 'Broadcast Outreach — Overview',
+        actions: [],
+    },
+    {
+        resource: 'page:broadcast-outreach-contacts',
+        label: 'Broadcast Outreach — Contacts',
+        actions: [
+            { resource: 'action:broadcast_contacts:send_message', label: 'Send WhatsApp broadcast message' },
+            { resource: 'action:broadcast_contacts:filter_by_year', label: 'Filter contacts by year' },
+            { resource: 'action:broadcast_contacts:upload', label: 'Upload contact list' },
+        ],
+    },
+    {
         resource: 'page:admin-invoices',
         label: 'Invoice Sync',
         actions: [],
@@ -113,6 +127,7 @@ export const PERMISSIONS_REGISTRY: PageDef[] = [
             { resource: 'action:admin_variable:delete', label: 'Delete variable' },
             { resource: 'action:emirate_config:toggle_status', label: 'Enable / disable emirate' },
             { resource: 'action:emirate_config:update', label: 'Update emirate categories' },
+            { resource: 'action:broadcast_settings:manage_template', label: 'Manage broadcast message template and image' },
         ],
     },
     {

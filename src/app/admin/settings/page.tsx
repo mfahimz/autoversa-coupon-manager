@@ -1,11 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { ChangeEvent, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/layout/Navbar'
 import Breadcrumb from '@/components/layout/Breadcrumb'
-import { loadPermissionsForRole, checkPermission } from '@/lib/permissions'
+import { loadPermissionsForRole, checkPermission, PermissionsMap } from '@/lib/permissions'
 import { toast } from 'sonner'
 
 
@@ -28,12 +28,25 @@ interface EmirateConfig {
     sort_order: number | null
 }
 
+interface BroadcastSettings {
+    message_template: string | null
+    image_url: string | null
+    image_storage_path: string | null
+    wave_min: number
+    wave_max: number
+    cooldown_min_minutes: number
+    cooldown_max_minutes: number
+    daily_wave_target: number
+}
+
 export default function AdminSettingsPage() {
     const router = useRouter()
     const supabase = createClient()
 
     const [pageLoading, setPageLoading] = useState(true)
     const [userRole, setUserRole] = useState<string | null>(null)
+    const [settingsUserId, setSettingsUserId] = useState<string | null>(null)
+    const [permissions, setPermissions] = useState<PermissionsMap>({})
     const [variables, setVariables] = useState<VariableConfig[]>([])
     const [emirates, setEmirates] = useState<EmirateConfig[]>([])
     const [loadingVars, setLoadingVars] = useState(true)
@@ -45,6 +58,24 @@ export default function AdminSettingsPage() {
     const [adding, setAdding] = useState(false)
     const [editingEmirateId, setEditingEmirateId] = useState<string | null>(null)
     const [editingCategories, setEditingCategories] = useState('')
+    const [broadcastSettings, setBroadcastSettings] = useState<BroadcastSettings>({ message_template: '', image_url: null, image_storage_path: null, wave_min: 5, wave_max: 8, cooldown_min_minutes: 5, cooldown_max_minutes: 15, daily_wave_target: 20 })
+    const [broadcastTemplate, setBroadcastTemplate] = useState('')
+    const [broadcastImageFile, setBroadcastImageFile] = useState<File | null>(null)
+    const [broadcastImagePreview, setBroadcastImagePreview] = useState<string | null>(null)
+    const [loadingBroadcastSettings, setLoadingBroadcastSettings] = useState(false)
+    const [savingBroadcastTemplate, setSavingBroadcastTemplate] = useState(false)
+    const [savingBroadcastImage, setSavingBroadcastImage] = useState(false)
+    const [waveMin, setWaveMin] = useState('5')
+    const [waveMax, setWaveMax] = useState('8')
+    const [cooldownMin, setCooldownMin] = useState('5')
+    const [cooldownMax, setCooldownMax] = useState('15')
+    const [savingThrottle, setSavingThrottle] = useState(false)
+    const [dailyWaveTarget, setDailyWaveTarget] = useState('20')
+    const [uploadYear, setUploadYear] = useState(String(new Date().getFullYear()))
+    const [uploading, setUploading] = useState(false)
+    const [overrideWaves, setOverrideWaves] = useState('')
+    const [grantingOverride, setGrantingOverride] = useState(false)
+    const [currentOverride, setCurrentOverride] = useState<number | null>(null)
 
     useEffect(() => {
         init()
@@ -83,7 +114,13 @@ export default function AdminSettingsPage() {
             return
         }
 
+        setPermissions(perms)
+        if (checkPermission(perms, profileData.user_role, 'action:broadcast_settings:manage_template', 'action')) {
+            await loadBroadcastSettings()
+        }
+
         setUserRole(profileData.user_role)
+        setSettingsUserId(user.id)
         setPageLoading(false)
     }
 
@@ -105,6 +142,148 @@ export default function AdminSettingsPage() {
             .order('sort_order', { ascending: true })
         if (data) setEmirates(data)
         setLoadingEmirates(false)
+    }
+
+    async function loadBroadcastSettings() {
+        setLoadingBroadcastSettings(true)
+        const [settingsResult, sendStateResult] = await Promise.all([
+            supabase
+                .from('broadcast_settings')
+                .select('message_template, image_url, image_storage_path, wave_min, wave_max, cooldown_min_minutes, cooldown_max_minutes, daily_wave_target')
+                .eq('id', 1)
+                .single(),
+            supabase.from('broadcast_send_state').select('daily_override_extra').eq('id', 1).single(),
+        ])
+        const { data, error } = settingsResult
+        if (error) showToast('Failed to load broadcast settings', 'error')
+        else if (data) {
+            setBroadcastSettings(data)
+            setBroadcastTemplate(data.message_template ?? '')
+            setBroadcastImagePreview(data.image_url ?? null)
+            setWaveMin(String(data.wave_min))
+            setWaveMax(String(data.wave_max))
+            setCooldownMin(String(data.cooldown_min_minutes))
+            setCooldownMax(String(data.cooldown_max_minutes))
+            setDailyWaveTarget(String(data.daily_wave_target))
+        }
+        if (sendStateResult.data) setCurrentOverride(sendStateResult.data.daily_override_extra)
+        setLoadingBroadcastSettings(false)
+    }
+
+    async function saveBroadcastTemplate() {
+        setSavingBroadcastTemplate(true)
+        const { error } = await supabase
+            .from('broadcast_settings')
+            .update({ message_template: broadcastTemplate.trim(), updated_at: new Date().toISOString(), updated_by: settingsUserId })
+            .eq('id', 1)
+        if (error) showToast('Failed to save broadcast template', 'error')
+        else {
+            setBroadcastSettings(current => ({ ...current, message_template: broadcastTemplate.trim() }))
+            showToast('Broadcast message template saved')
+        }
+        setSavingBroadcastTemplate(false)
+    }
+
+    async function saveThrottleSettings() {
+        const min = Number(waveMin)
+        const max = Number(waveMax)
+        const cdMin = Number(cooldownMin)
+        const cdMax = Number(cooldownMax)
+        const dailyTarget = Number(dailyWaveTarget)
+        if (!Number.isInteger(min) || !Number.isInteger(max) || min < 1 || min > max) { showToast('Min messages per wave must be ≤ max', 'error'); return }
+        if (!Number.isInteger(cdMin) || !Number.isInteger(cdMax) || cdMin < 1 || cdMin > cdMax) { showToast('Min cooldown must be ≤ max cooldown', 'error'); return }
+        if (!Number.isInteger(dailyTarget) || dailyTarget < 1) { showToast('Daily wave target must be a positive integer', 'error'); return }
+        setSavingThrottle(true)
+        const { error } = await supabase
+            .from('broadcast_settings')
+            .update({ wave_min: min, wave_max: max, cooldown_min_minutes: cdMin, cooldown_max_minutes: cdMax, daily_wave_target: dailyTarget, updated_at: new Date().toISOString(), updated_by: settingsUserId })
+            .eq('id', 1)
+        if (error) showToast('Failed to save throttle settings', 'error')
+        else {
+            setBroadcastSettings(current => ({ ...current, wave_min: min, wave_max: max, cooldown_min_minutes: cdMin, cooldown_max_minutes: cdMax, daily_wave_target: dailyTarget }))
+            showToast('Throttle settings saved')
+        }
+        setSavingThrottle(false)
+    }
+
+    async function grantOverrideWaves() {
+        const extra = Number(overrideWaves)
+        if (!Number.isInteger(extra) || extra < 1) { showToast('Enter a positive number of extra waves to grant', 'error'); return }
+        setGrantingOverride(true)
+        const { data: current, error: readError } = await supabase.from('broadcast_send_state').select('daily_override_extra').eq('id', 1).single()
+        if (readError) { showToast('Failed to read current override', 'error'); setGrantingOverride(false); return }
+        const newOverride = (current?.daily_override_extra ?? 0) + extra
+        const { error } = await supabase.from('broadcast_send_state').update({ daily_override_extra: newOverride, updated_at: new Date().toISOString() }).eq('id', 1)
+        if (error) showToast('Failed to grant override waves', 'error')
+        else {
+            setCurrentOverride(newOverride)
+            setOverrideWaves('')
+            showToast(`Granted ${extra} extra wave${extra === 1 ? '' : 's'} for today`)
+        }
+        setGrantingOverride(false)
+    }
+
+    async function handleContactUpload(event: ChangeEvent<HTMLInputElement>) {
+        const file = event.target.files?.[0]
+        event.target.value = ''
+        if (!file) return
+        const year = Number(uploadYear)
+        if (!Number.isInteger(year) || year < 1900 || year > 3000) { showToast('Enter a valid year before uploading.', 'error'); return }
+        const extension = file.name.split('.').pop()?.toLowerCase()
+        if (!extension || !['csv', 'xlsx'].includes(extension)) { showToast('Upload a CSV or XLSX file.', 'error'); return }
+        setUploading(true)
+        try {
+            const formData = new FormData()
+            formData.append('file', file)
+            formData.append('year', String(year))
+            const response = await fetch('/api/broadcast-outreach/upload', { method: 'POST', body: formData })
+            const result = await response.json()
+            if (!response.ok) throw new Error(result.error ?? 'Unable to parse or upload the contact list.')
+            const { insertedCount, invalidCount } = result as { insertedCount: number; invalidCount: number }
+            if (insertedCount > 0) showToast(`${insertedCount} number${insertedCount === 1 ? '' : 's'} uploaded for year ${year}`)
+            if (invalidCount) showToast(`${invalidCount} invalid row${invalidCount === 1 ? '' : 's'} skipped.`, 'error')
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unable to parse or upload the contact list.'
+            showToast(message, 'error')
+        } finally { setUploading(false) }
+    }
+
+    function handleBroadcastImageUpload(event: React.ChangeEvent<HTMLInputElement>) {
+        const file = event.target.files?.[0]
+        if (!file) return
+        if (!file.type.startsWith('image/')) { showToast('Please upload an image file', 'error'); return }
+        const url = URL.createObjectURL(file)
+        setBroadcastImageFile(file)
+        setBroadcastImagePreview(url)
+    }
+
+    async function saveBroadcastImage() {
+        if (!broadcastImageFile) { showToast('Choose an image first', 'error'); return }
+        setSavingBroadcastImage(true)
+        const ext = broadcastImageFile.name.split('.').pop()
+        const path = `broadcast-outreach/message-image.${ext}`
+        const previousPath = broadcastSettings.image_storage_path
+        if (previousPath && previousPath !== path) await supabase.storage.from('broadcast-outreach').remove([previousPath])
+        await supabase.storage.from('broadcast-outreach').remove([path])
+        const { error: uploadError } = await supabase.storage.from('broadcast-outreach').upload(path, broadcastImageFile)
+        if (uploadError) {
+            showToast('Failed to upload broadcast image', 'error')
+            setSavingBroadcastImage(false)
+            return
+        }
+        const { data: urlData } = supabase.storage.from('broadcast-outreach').getPublicUrl(path)
+        const { error } = await supabase
+            .from('broadcast_settings')
+            .update({ image_url: urlData.publicUrl, image_storage_path: path, updated_at: new Date().toISOString(), updated_by: settingsUserId })
+            .eq('id', 1)
+        if (error) showToast('Image uploaded, but failed to save broadcast settings', 'error')
+        else {
+            setBroadcastSettings(current => ({ ...current, image_url: urlData.publicUrl, image_storage_path: path }))
+            setBroadcastImagePreview(urlData.publicUrl)
+            setBroadcastImageFile(null)
+            showToast('Broadcast image saved')
+        }
+        setSavingBroadcastImage(false)
     }
 
     function showToast(message: string, type: 'success' | 'error' = 'success') {
@@ -440,7 +619,79 @@ export default function AdminSettingsPage() {
                     )}
                 </div>
 
-                {/* Section 3 — More Settings placeholder (hidden for MANAGER) */}
+                {/* Section 3 — Broadcast Outreach Settings */}
+                {(checkPermission(permissions, userRole || '', 'action:broadcast_settings:manage_template', 'action') || checkPermission(permissions, userRole || '', 'action:broadcast_contacts:upload', 'action')) && (
+                <div style={{
+                    backgroundColor: '#FFFFFF', borderRadius: '16px',
+                    boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+                    overflow: 'hidden', marginBottom: '24px',
+                }}>
+                    <div style={{ padding: '20px 24px', borderBottom: '1px solid #F0F0F0' }}>
+                        <h2 style={{ fontSize: '16px', fontWeight: '700', color: '#1A1A1A', margin: 0 }}>Broadcast Outreach Settings</h2>
+                        <p style={{ fontSize: '13px', color: '#666', marginTop: '4px' }}>Configure the WhatsApp message, image, contact list, and send throttling used for broadcast outreach.</p>
+                    </div>
+                    {loadingBroadcastSettings ? (
+                        <div style={{ height: '180px', margin: '20px 24px', backgroundColor: '#F0F0F0', borderRadius: '8px', animation: 'pulse 1.5s ease-in-out infinite' }} />
+                    ) : (
+                        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                            {checkPermission(permissions, userRole || '', 'action:broadcast_contacts:upload', 'action') && (
+                            <div>
+                                <label style={labelStyle}>Upload Contacts</label>
+                                <p style={{ fontSize: '12px', color: '#666', margin: '0 0 12px' }}>Upload a CSV or XLSX list of mobile numbers for a given year.</p>
+                                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'end' }}>
+                                    <div><label style={{ ...labelStyle, fontSize: '12px' }}>Year</label><input type="number" value={uploadYear} onChange={e => setUploadYear(e.target.value)} min="1900" max="3000" style={{ ...inputStyle, width: '160px' }} /></div>
+                                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '10px 20px', backgroundColor: uploading ? '#93C5E8' : '#0074BD', color: '#FFF', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: uploading ? 'not-allowed' : 'pointer' }}>
+                                        <span>{uploading ? 'Uploading…' : 'Upload Contacts (.csv, .xlsx)'}</span>
+                                        <input type="file" accept=".csv,.xlsx" style={{ display: 'none' }} onChange={handleContactUpload} disabled={uploading} />
+                                    </label>
+                                </div>
+                            </div>
+                            )}
+                            {checkPermission(permissions, userRole || '', 'action:broadcast_settings:manage_template', 'action') && (
+                            <>
+                            <div style={{ paddingTop: checkPermission(permissions, userRole || '', 'action:broadcast_contacts:upload', 'action') ? '20px' : '0', borderTop: checkPermission(permissions, userRole || '', 'action:broadcast_contacts:upload', 'action') ? '1px solid #F0F0F0' : 'none' }}>
+                                <label style={labelStyle}>Message Template</label>
+                                <textarea value={broadcastTemplate} onChange={event => setBroadcastTemplate(event.target.value)} placeholder="Write the WhatsApp broadcast message…" rows={6} style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }} />
+                                <div style={{ marginTop: '10px' }}><button onClick={saveBroadcastTemplate} disabled={savingBroadcastTemplate} style={{ padding: '9px 18px', backgroundColor: savingBroadcastTemplate ? '#93C5E8' : '#0074BD', color: '#FFF', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: savingBroadcastTemplate ? 'not-allowed' : 'pointer' }}>{savingBroadcastTemplate ? 'Saving…' : 'Save Template'}</button></div>
+                            </div>
+                            <div style={{ paddingTop: '20px', borderTop: '1px solid #F0F0F0' }}>
+                                <label style={labelStyle}>Broadcast Image</label>
+                                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '10px 20px', backgroundColor: '#F0F4FF', color: '#162860', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: 'pointer', border: '1.5px dashed #0074BD' }}>
+                                    <span>{broadcastImagePreview ? 'Replace Image' : 'Upload Image'}</span>
+                                    <input type="file" accept="image/*" style={{ display: 'none' }} onChange={handleBroadcastImageUpload} />
+                                </label>
+                                {broadcastImagePreview && <div style={{ marginTop: '12px' }}><img src={broadcastImagePreview} alt="Broadcast message preview" style={{ display: 'block', maxWidth: '320px', maxHeight: '200px', borderRadius: '10px', border: '1px solid #E0E0E0', objectFit: 'contain' }} /></div>}
+                                <div style={{ marginTop: '12px' }}><button onClick={saveBroadcastImage} disabled={!broadcastImageFile || savingBroadcastImage} style={{ padding: '9px 18px', backgroundColor: !broadcastImageFile || savingBroadcastImage ? '#93C5E8' : '#0074BD', color: '#FFF', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: !broadcastImageFile || savingBroadcastImage ? 'not-allowed' : 'pointer' }}>{savingBroadcastImage ? 'Saving…' : 'Save Image'}</button></div>
+                            </div>
+                            <div style={{ paddingTop: '20px', borderTop: '1px solid #F0F0F0' }}>
+                                <label style={labelStyle}>Send Throttling</label>
+                                <p style={{ fontSize: '12px', color: '#666', margin: '0 0 12px' }}>Sends pause automatically in randomized waves to reduce the risk of WhatsApp rate-limiting.</p>
+                                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                                    <div><label style={{ ...labelStyle, fontSize: '12px' }}>Min messages per wave</label><input type="number" min={1} value={waveMin} onChange={e => setWaveMin(e.target.value)} style={{ ...inputStyle, width: '160px' }} /></div>
+                                    <div><label style={{ ...labelStyle, fontSize: '12px' }}>Max messages per wave</label><input type="number" min={1} value={waveMax} onChange={e => setWaveMax(e.target.value)} style={{ ...inputStyle, width: '160px' }} /></div>
+                                    <div><label style={{ ...labelStyle, fontSize: '12px' }}>Min cooldown (minutes)</label><input type="number" min={1} value={cooldownMin} onChange={e => setCooldownMin(e.target.value)} style={{ ...inputStyle, width: '160px' }} /></div>
+                                    <div><label style={{ ...labelStyle, fontSize: '12px' }}>Max cooldown (minutes)</label><input type="number" min={1} value={cooldownMax} onChange={e => setCooldownMax(e.target.value)} style={{ ...inputStyle, width: '160px' }} /></div>
+                                    <div><label style={{ ...labelStyle, fontSize: '12px' }}>Daily wave target</label><input type="number" min={1} value={dailyWaveTarget} onChange={e => setDailyWaveTarget(e.target.value)} style={{ ...inputStyle, width: '160px' }} /></div>
+                                </div>
+                                <p style={{ fontSize: '11px', color: '#888', margin: '8px 0 0' }}>Number of completed waves allowed per rolling 24h period (waves, not individual messages — wave size is randomized above). Sends hard-block once this is reached.</p>
+                                <div style={{ marginTop: '12px' }}><button onClick={saveThrottleSettings} disabled={savingThrottle} style={{ padding: '9px 18px', backgroundColor: savingThrottle ? '#93C5E8' : '#0074BD', color: '#FFF', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: savingThrottle ? 'not-allowed' : 'pointer' }}>{savingThrottle ? 'Saving…' : 'Save Throttle Settings'}</button></div>
+                            </div>
+                            <div style={{ paddingTop: '20px', borderTop: '1px solid #F0F0F0' }}>
+                                <label style={labelStyle}>Daily Limit Override</label>
+                                <p style={{ fontSize: '12px', color: '#666', margin: '0 0 12px' }}>Grant extra waves for the current 24h period once the daily target has been hit.{currentOverride !== null && currentOverride > 0 ? ` Currently granted: +${currentOverride} wave${currentOverride === 1 ? '' : 's'} today.` : ''}</p>
+                                <div style={{ display: 'flex', gap: '12px', alignItems: 'end', flexWrap: 'wrap' }}>
+                                    <div><label style={{ ...labelStyle, fontSize: '12px' }}>Extra waves to grant</label><input type="number" min={1} value={overrideWaves} onChange={e => setOverrideWaves(e.target.value)} style={{ ...inputStyle, width: '160px' }} /></div>
+                                    <button onClick={grantOverrideWaves} disabled={grantingOverride} style={{ padding: '9px 18px', backgroundColor: grantingOverride ? '#93C5E8' : '#0074BD', color: '#FFF', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: grantingOverride ? 'not-allowed' : 'pointer' }}>{grantingOverride ? 'Granting…' : 'Grant Override'}</button>
+                                </div>
+                            </div>
+                            </>
+                            )}
+                        </div>
+                    )}
+                </div>
+                )}
+
+                {/* Section 4 — More Settings placeholder (hidden for MANAGER) */}
                 {userRole !== 'MANAGER' && (
                 <div style={{
                     backgroundColor: '#FFFFFF', borderRadius: '16px',

@@ -322,6 +322,137 @@ export type Database = {
           },
         ]
       }
+      broadcast_contacts: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          mobile_number: string
+          sent_at: string | null
+          sent_by: string | null
+          year: number
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          mobile_number: string
+          sent_at?: string | null
+          sent_by?: string | null
+          year: number
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          mobile_number?: string
+          sent_at?: string | null
+          sent_by?: string | null
+          year?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "broadcast_contacts_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "broadcast_contacts_sent_by_fkey"
+            columns: ["sent_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      broadcast_send_state: {
+        Row: {
+          cooldown_until: string | null
+          current_wave_count: number
+          daily_override_extra: number
+          daily_period_started_at: string | null
+          id: number
+          last_sent_at: string | null
+          updated_at: string
+          wave_target: number
+          waves_completed_today: number
+        }
+        Insert: {
+          cooldown_until?: string | null
+          current_wave_count?: number
+          daily_override_extra?: number
+          daily_period_started_at?: string | null
+          id?: number
+          last_sent_at?: string | null
+          updated_at?: string
+          wave_target?: number
+          waves_completed_today?: number
+        }
+        Update: {
+          cooldown_until?: string | null
+          current_wave_count?: number
+          daily_override_extra?: number
+          daily_period_started_at?: string | null
+          id?: number
+          last_sent_at?: string | null
+          updated_at?: string
+          wave_target?: number
+          waves_completed_today?: number
+        }
+        Relationships: []
+      }
+      broadcast_settings: {
+        Row: {
+          cooldown_max_minutes: number
+          cooldown_min_minutes: number
+          daily_wave_target: number
+          id: number
+          image_storage_path: string | null
+          image_url: string | null
+          message_template: string
+          updated_at: string
+          updated_by: string | null
+          wave_max: number
+          wave_min: number
+        }
+        Insert: {
+          cooldown_max_minutes?: number
+          cooldown_min_minutes?: number
+          daily_wave_target?: number
+          id?: number
+          image_storage_path?: string | null
+          image_url?: string | null
+          message_template?: string
+          updated_at?: string
+          updated_by?: string | null
+          wave_max?: number
+          wave_min?: number
+        }
+        Update: {
+          cooldown_max_minutes?: number
+          cooldown_min_minutes?: number
+          daily_wave_target?: number
+          id?: number
+          image_storage_path?: string | null
+          image_url?: string | null
+          message_template?: string
+          updated_at?: string
+          updated_by?: string | null
+          wave_max?: number
+          wave_min?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "broadcast_settings_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       campaign_config: {
         Row: {
           campaign_name: string
@@ -1189,6 +1320,17 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      advance_broadcast_send_state: {
+        Args: never
+        Returns: {
+          cooldown_until: string
+          current_wave_count: number
+          daily_override_extra: number
+          daily_period_started_at: string
+          wave_target: number
+          waves_completed_today: number
+        }[]
+      }
       advance_m_coupon_stage: { Args: { p_b_coupon_id: string }; Returns: Json }
       get_advisor_leaderboard: {
         Args: never
@@ -1256,12 +1398,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1285,11 +1427,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1310,11 +1452,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1335,11 +1477,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -1352,11 +1494,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }

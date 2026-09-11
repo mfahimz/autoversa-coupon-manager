@@ -22,6 +22,11 @@ const ADMIN_DROPDOWN = [
     { label: 'Invoice Sync', href: '/admin/invoices', resource: 'page:admin-invoices' },
 ]
 
+const BROADCAST_DROPDOWN = [
+    { label: 'Overview', href: '/broadcast-outreach/overview', resource: 'page:broadcast-outreach-overview' },
+    { label: 'Contacts', href: '/broadcast-outreach/contacts', resource: 'page:broadcast-outreach-contacts' },
+]
+
 export default function Navbar() {
     const router = useRouter()
     const pathname = usePathname()
@@ -109,6 +114,8 @@ export default function Navbar() {
     const visibleNavItems = permissionsLoaded ? ALL_NAV_ITEMS.filter(item => canSee(item.resource)) : []
     const visibleAdminItems = permissionsLoaded ? ADMIN_DROPDOWN.filter(item => canSee(item.resource)) : []
     const showAdminDropdown = permissionsLoaded && (role === 'ADMIN' || visibleAdminItems.length > 0)
+    const visibleBroadcastItems = permissionsLoaded ? BROADCAST_DROPDOWN.filter(item => canSee(item.resource)) : []
+    const showBroadcastDropdown = permissionsLoaded && (role === 'ADMIN' || visibleBroadcastItems.length > 0)
 
     function navBtnStyle(active: boolean): React.CSSProperties {
         return {
@@ -217,6 +224,81 @@ export default function Navbar() {
                                         {item.label}
                                     </button>
                                 ))}
+
+                                {showBroadcastDropdown && (
+                                    <div
+                                        style={{ position: 'relative' }}
+                                        onMouseEnter={() => {
+                                            if (closeDropdownTimer.current) clearTimeout(closeDropdownTimer.current)
+                                            setOpenDropdown('broadcast')
+                                        }}
+                                        onMouseLeave={() => {
+                                            closeDropdownTimer.current = setTimeout(() => setOpenDropdown(null), 200)
+                                        }}
+                                    >
+                                        <button
+                                            style={{
+                                                ...navBtnStyle(visibleBroadcastItems.some(c => isActive(c.href))),
+                                                display: 'flex', alignItems: 'center', gap: '6px',
+                                            }}
+                                            onMouseEnter={e => {
+                                                if (!visibleBroadcastItems.some(c => isActive(c.href)))
+                                                    (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.12)'
+                                            }}
+                                            onMouseLeave={e => {
+                                                if (!visibleBroadcastItems.some(c => isActive(c.href)))
+                                                    (e.currentTarget as HTMLButtonElement).style.background = 'transparent'
+                                            }}
+                                        >
+                                            Broadcast Outreach
+                                            <span style={{ fontSize: '9px', opacity: 0.7 }}>▼</span>
+                                        </button>
+
+                                        {openDropdown === 'broadcast' && (
+                                            <div
+                                                style={{
+                                                    position: 'absolute',
+                                                    top: 'calc(100% + 8px)',
+                                                    left: '50%',
+                                                    transform: 'translateX(-50%)',
+                                                    borderRadius: '20px',
+                                                    padding: '8px',
+                                                    minWidth: '180px',
+                                                    background: 'linear-gradient(160deg, rgba(22,40,96,0.92) 0%, rgba(0,116,189,0.7) 100%)',
+                                                    backdropFilter: 'blur(24px) saturate(180%)',
+                                                    WebkitBackdropFilter: 'blur(24px) saturate(180%)',
+                                                    border: '1px solid rgba(255,255,255,0.12)',
+                                                    boxShadow: '0 8px 32px rgba(22,40,96,0.4), 0 2px 8px rgba(0,116,189,0.2)',
+                                                    zIndex: 200,
+                                                }}
+                                                onMouseEnter={() => {
+                                                    if (closeDropdownTimer.current) clearTimeout(closeDropdownTimer.current)
+                                                }}
+                                                onMouseLeave={() => {
+                                                    closeDropdownTimer.current = setTimeout(() => setOpenDropdown(null), 200)
+                                                }}
+                                            >
+                                                {(role === 'ADMIN' ? BROADCAST_DROPDOWN : visibleBroadcastItems).map(child => (
+                                                    <button
+                                                        key={child.href}
+                                                        onClick={() => { router.push(child.href); setOpenDropdown(null) }}
+                                                        style={dropdownItemStyle(isActive(child.href))}
+                                                        onMouseEnter={e => {
+                                                            if (!isActive(child.href))
+                                                                (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.12)'
+                                                        }}
+                                                        onMouseLeave={e => {
+                                                            if (!isActive(child.href))
+                                                                (e.currentTarget as HTMLButtonElement).style.background = isActive(child.href) ? 'rgba(0,116,189,0.7)' : 'transparent'
+                                                        }}
+                                                    >
+                                                        {child.label}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
 
                                 {showAdminDropdown && (
                                     <div
