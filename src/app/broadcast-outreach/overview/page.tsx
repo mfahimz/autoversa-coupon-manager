@@ -189,10 +189,10 @@ export default function BroadcastOutreachOverviewPage() {
         init()
     }, [router])
 
-    const canViewAllStats = checkPermission(permissions, userRole, 'action:broadcast_overview:view_all_stats', 'action') || checkPermission(permissions, userRole, 'action:broadcast_contacts:view_stats', 'action')
-    const canViewSenderBreakdown = checkPermission(permissions, userRole, 'action:broadcast_overview:view_sender_breakdown', 'action') || checkPermission(permissions, userRole, 'action:broadcast_contacts:view_stats', 'action')
-    const canViewYearBreakdown = checkPermission(permissions, userRole, 'action:broadcast_overview:view_year_breakdown', 'action') || checkPermission(permissions, userRole, 'action:broadcast_contacts:view_all_contacts', 'action')
-    const canViewWaveLogs = checkPermission(permissions, userRole, 'action:broadcast_overview:view_wave_logs', 'action') || checkPermission(permissions, userRole, 'action:broadcast_contacts:view_stats', 'action')
+    const canViewAllStats = checkPermission(permissions, userRole, 'action:broadcast_overview:view_all_stats', 'action')
+    const canViewSenderBreakdown = checkPermission(permissions, userRole, 'action:broadcast_overview:view_sender_breakdown', 'action')
+    const canViewYearBreakdown = checkPermission(permissions, userRole, 'action:broadcast_overview:view_year_breakdown', 'action')
+    const canViewWaveLogs = checkPermission(permissions, userRole, 'action:broadcast_overview:view_wave_logs', 'action')
 
     return (
         <div style={{ minHeight: '100vh', background: '#F7F7F7', paddingTop: '16px' }}>
