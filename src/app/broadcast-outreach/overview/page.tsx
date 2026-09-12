@@ -4,10 +4,11 @@ export const dynamic = 'force-dynamic'
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/layout/Navbar'
 import Breadcrumb from '@/components/layout/Breadcrumb'
-import { checkPermission, loadPermissionsForRole } from '@/lib/permissions'
+import { checkPermission, loadPermissionsForRole, PermissionsMap } from '@/lib/permissions'
 import { toast } from 'sonner'
 
 const supabase = createClient()
@@ -62,6 +63,8 @@ function StatCard({ label, value, color, loading }: { label: string; value: numb
 export default function BroadcastOutreachOverviewPage() {
     const router = useRouter()
     const [loading, setLoading] = useState(true)
+    const [userRole, setUserRole] = useState('')
+    const [permissions, setPermissions] = useState<PermissionsMap>({})
     const [stats, setStats] = useState<Stats>({ total: 0, totalSent: 0, sentToday: 0, sentThisMonth: 0 })
     const [byYear, setByYear] = useState<{ year: number; total: number; sent: number }[]>([])
     const [waveLogs, setWaveLogs] = useState<WaveLog[]>([])
@@ -72,8 +75,11 @@ export default function BroadcastOutreachOverviewPage() {
             if (!user) { router.push('/login'); return }
             const { data: profile } = await supabase.from('profiles').select('user_role, is_active').eq('id', user.id).single<{ user_role: string; is_active: boolean | null }>()
             if (!profile || profile.is_active === false) { router.push('/login'); return }
-            const permissions = await loadPermissionsForRole(profile.user_role)
-            if (!checkPermission(permissions, profile.user_role, 'page:broadcast-outreach-overview', 'view')) { router.push('/dashboard'); return }
+            const loadedPermissions = await loadPermissionsForRole(profile.user_role)
+            if (!checkPermission(loadedPermissions, profile.user_role, 'page:broadcast-outreach-overview', 'view')) { router.push('/dashboard'); return }
+
+            setUserRole(profile.user_role)
+            setPermissions(loadedPermissions)
 
             const [batch1, batch2, waveLogsResult] = await Promise.all([
                 supabase.from('broadcast_contacts').select('id, year, sent_at').range(0, 999),
@@ -116,41 +122,118 @@ export default function BroadcastOutreachOverviewPage() {
         init()
     }, [router])
 
+    const canViewAllStats = checkPermission(permissions, userRole, 'action:broadcast_overview:view_all_stats', 'action') || checkPermission(permissions, userRole, 'action:broadcast_contacts:view_stats', 'action')
+    const canViewYearBreakdown = checkPermission(permissions, userRole, 'action:broadcast_overview:view_year_breakdown', 'action') || checkPermission(permissions, userRole, 'action:broadcast_contacts:view_all_contacts', 'action')
+    const canViewWaveLogs = checkPermission(permissions, userRole, 'action:broadcast_overview:view_wave_logs', 'action') || checkPermission(permissions, userRole, 'action:broadcast_contacts:view_stats', 'action')
+
     return (
         <div style={{ minHeight: '100vh', background: '#F7F7F7', paddingTop: '16px' }}>
             <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }`}</style>
             <Navbar />
             <main style={{ padding: '0 32px 48px' }}>
                 <Breadcrumb items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Broadcast Outreach' }, { label: 'Overview' }]} />
-                <div style={{ marginBottom: '28px' }}>
-                    <h1 style={{ fontSize: '22px', fontWeight: 700, color: '#1A1A1A', margin: 0 }}>Broadcast Outreach</h1>
-                    <p style={{ color: '#666', fontSize: '14px', marginTop: '6px' }}>Contact-list and WhatsApp outreach summary.</p>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px', marginBottom: '28px' }}>
+                    <div>
+                        <h1 style={{ fontSize: '22px', fontWeight: 700, color: '#1A1A1A', margin: 0 }}>Broadcast Outreach</h1>
+                        <p style={{ color: '#666', fontSize: '14px', marginTop: '6px' }}>Contact-list and WhatsApp outreach summary.</p>
+                    </div>
+                    <Link
+                        href="/broadcast-outreach/contacts"
+                        style={{ padding: '10px 18px', background: '#0074BD', color: '#FFF', borderRadius: '8px', fontSize: '13px', fontWeight: 600, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                    >
+                        Go to Contacts Dispatch →
+                    </Link>
                 </div>
+
+                {/* Metrics Cards — Conceal total dataset size & total remaining count if user lacks permission */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '16px', marginBottom: '28px' }}>
-                    <StatCard label="Total Contacts" value={stats.total} color="#0074BD" loading={loading} />
-                    <StatCard label="Total Sent" value={stats.totalSent} color="#16A34A" loading={loading} />
+                    {canViewAllStats && <StatCard label="Total Contacts" value={stats.total} color="#0074BD" loading={loading} />}
+                    {canViewAllStats && <StatCard label="Total Sent" value={stats.totalSent} color="#16A34A" loading={loading} />}
                     <StatCard label="Sent Today" value={stats.sentToday} color="#7C3AED" loading={loading} />
                     <StatCard label="Sent This Month" value={stats.sentThisMonth} color="#D97706" loading={loading} />
-                    <StatCard label="Remaining / Unsent" value={stats.total - stats.totalSent} color="#D0021B" loading={loading} />
+                    {canViewAllStats && <StatCard label="Remaining / Unsent" value={stats.total - stats.totalSent} color="#D0021B" loading={loading} />}
                 </div>
-                <section style={{ background: '#FFF', borderRadius: '16px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', overflow: 'hidden' }}>
-                    <div style={{ padding: '20px 24px', borderBottom: '1px solid #F0F0F0' }}><h2 style={{ fontSize: '16px', fontWeight: 700, color: '#1A1A1A', margin: 0 }}>Year Breakdown</h2></div>
-                    {loading ? <div style={{ padding: '28px 24px', color: '#666', fontSize: '14px' }}>Loading contacts…</div> : byYear.length === 0 ? <div style={{ padding: '28px 24px', color: '#666', fontSize: '14px' }}>No contacts have been uploaded yet.</div> : (
-                        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-                            <thead><tr style={{ background: '#162860', color: '#FFF', fontSize: '12px', textTransform: 'uppercase' }}><th style={headerCell}>Year</th><th style={headerCell}>Total Contacts</th><th style={headerCell}>Sent</th><th style={headerCell}>Remaining</th></tr></thead>
-                            <tbody>{byYear.map(row => <tr key={row.year} style={{ borderBottom: '1px solid #F5F5F5' }}><td style={cell}>{row.year}</td><td style={cell}>{row.total.toLocaleString()}</td><td style={cell}>{row.sent.toLocaleString()}</td><td style={cell}>{(row.total - row.sent).toLocaleString()}</td></tr>)}</tbody>
-                        </table>
-                    )}
-                </section>
-                <section style={{ background: '#FFF', borderRadius: '16px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', overflow: 'hidden', marginTop: '24px' }}>
-                    <div style={{ padding: '20px 24px', borderBottom: '1px solid #F0F0F0' }}><h2 style={{ fontSize: '16px', fontWeight: 700, color: '#1A1A1A', margin: 0 }}>Wave Performance</h2><p style={{ fontSize: '13px', color: '#666', margin: '5px 0 0' }}>Completed waves and their delivery performance.</p></div>
-                    {loading ? <div style={{ padding: '28px 24px', color: '#666', fontSize: '14px' }}>Loading wave history…</div> : waveLogs.length === 0 ? <div style={{ padding: '28px 24px', color: '#666', fontSize: '14px' }}>No completed waves yet.</div> : (
-                        <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', minWidth: '1060px', borderCollapse: 'collapse', textAlign: 'left' }}>
-                            <thead><tr style={{ background: '#162860', color: '#FFF', fontSize: '12px', textTransform: 'uppercase' }}><th style={headerCell}>Wave</th><th style={headerCell}>Messages</th><th style={headerCell}>Started</th><th style={headerCell}>Completed</th><th style={headerCell}>Duration</th><th style={headerCell}>Next Wave</th><th style={headerCell}>Completed By</th></tr></thead>
-                            <tbody>{waveLogs.map(log => <tr key={log.id} style={{ borderBottom: '1px solid #F5F5F5' }}><td style={cell}><strong>#{log.daily_wave_number}</strong></td><td style={cell}><strong>{log.messages_sent} messages</strong></td><td style={cell}>{formatDateTime(log.started_at)}</td><td style={cell}>{formatDateTime(log.completed_at)}</td><td style={cell}>{formatDuration(log.duration_seconds)}</td><td style={cell}>{log.cooldown_minutes !== null ? `In ${log.cooldown_minutes} min` : '—'}</td><td style={cell}>{log.completed_by_name || '—'}</td></tr>)}</tbody>
-                        </table></div>
-                    )}
-                </section>
+
+                {/* Year Breakdown Table — only visible if user has permission */}
+                {canViewYearBreakdown && (
+                    <section style={{ background: '#FFF', borderRadius: '16px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', overflow: 'hidden', marginBottom: '24px' }}>
+                        <div style={{ padding: '20px 24px', borderBottom: '1px solid #F0F0F0' }}>
+                            <h2 style={{ fontSize: '16px', fontWeight: 700, color: '#1A1A1A', margin: 0 }}>Year Breakdown</h2>
+                        </div>
+                        {loading ? <div style={{ padding: '28px 24px', color: '#666', fontSize: '14px' }}>Loading contacts…</div> : byYear.length === 0 ? <div style={{ padding: '28px 24px', color: '#666', fontSize: '14px' }}>No contacts have been uploaded yet.</div> : (
+                            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                                <thead>
+                                    <tr style={{ background: '#162860', color: '#FFF', fontSize: '12px', textTransform: 'uppercase' }}>
+                                        <th style={headerCell}>Year</th>
+                                        <th style={headerCell}>Total Contacts</th>
+                                        <th style={headerCell}>Sent</th>
+                                        <th style={headerCell}>Remaining</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {byYear.map(row => (
+                                        <tr key={row.year} style={{ borderBottom: '1px solid #F5F5F5' }}>
+                                            <td style={cell}>{row.year}</td>
+                                            <td style={cell}>{row.total.toLocaleString()}</td>
+                                            <td style={cell}>{row.sent.toLocaleString()}</td>
+                                            <td style={cell}>{(row.total - row.sent).toLocaleString()}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
+                    </section>
+                )}
+
+                {/* Wave Performance Logs Table — only visible if user has permission */}
+                {canViewWaveLogs && (
+                    <section style={{ background: '#FFF', borderRadius: '16px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', overflow: 'hidden' }}>
+                        <div style={{ padding: '20px 24px', borderBottom: '1px solid #F0F0F0' }}>
+                            <h2 style={{ fontSize: '16px', fontWeight: 700, color: '#1A1A1A', margin: 0 }}>Wave Performance</h2>
+                            <p style={{ fontSize: '13px', color: '#666', margin: '5px 0 0' }}>Completed waves and their delivery performance.</p>
+                        </div>
+                        {loading ? <div style={{ padding: '28px 24px', color: '#666', fontSize: '14px' }}>Loading wave history…</div> : waveLogs.length === 0 ? <div style={{ padding: '28px 24px', color: '#666', fontSize: '14px' }}>No completed waves yet.</div> : (
+                            <div style={{ overflowX: 'auto' }}>
+                                <table style={{ width: '100%', minWidth: '1060px', borderCollapse: 'collapse', textAlign: 'left' }}>
+                                    <thead>
+                                        <tr style={{ background: '#162860', color: '#FFF', fontSize: '12px', textTransform: 'uppercase' }}>
+                                            <th style={headerCell}>Wave</th>
+                                            <th style={headerCell}>Messages</th>
+                                            <th style={headerCell}>Started</th>
+                                            <th style={headerCell}>Completed</th>
+                                            <th style={headerCell}>Duration</th>
+                                            <th style={headerCell}>Next Wave</th>
+                                            <th style={headerCell}>Completed By</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {waveLogs.map(log => (
+                                            <tr key={log.id} style={{ borderBottom: '1px solid #F5F5F5' }}>
+                                                <td style={cell}><strong>#{log.daily_wave_number}</strong></td>
+                                                <td style={cell}><strong>{log.messages_sent} messages</strong></td>
+                                                <td style={cell}>{formatDateTime(log.started_at)}</td>
+                                                <td style={cell}>{formatDateTime(log.completed_at)}</td>
+                                                <td style={cell}>{formatDuration(log.duration_seconds)}</td>
+                                                <td style={cell}>{log.cooldown_minutes !== null ? `In ${log.cooldown_minutes} min` : '—'}</td>
+                                                <td style={cell}>{log.completed_by_name || '—'}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </section>
+                )}
+
+                {/* Notice for least-privileged sender users */}
+                {!canViewAllStats && !canViewYearBreakdown && !canViewWaveLogs && (
+                    <div style={{ marginTop: '24px', background: '#F8FAFC', border: '1px dashed #CBD5E1', borderRadius: '12px', padding: '28px', textAlign: 'center' }}>
+                        <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#334155', margin: '0 0 6px' }}>Sender View Active</h3>
+                        <p style={{ fontSize: '13px', color: '#64748B', margin: 0, maxWidth: '460px', marginLeft: 'auto', marginRight: 'auto' }}>
+                            Full database volume, year breakdown, and wave logs are restricted for your role. You can dispatch assigned WhatsApp messages from the Contacts tab.
+                        </p>
+                    </div>
+                )}
             </main>
         </div>
     )
