@@ -192,26 +192,19 @@ export default function BroadcastOutreachContactsPage() {
         const wasCoolingDown = previousCooldownActiveRef.current
         if (wasCoolingDown && !cooldownActive) {
             playCooldownCompleteSound()
-            const isWaveReady = sendState.current_wave_count === 0
             if ('Notification' in window && Notification.permission === 'granted') {
                 new Notification(
-                    isWaveReady ? 'Broadcast wave is ready' : 'Next message ready',
+                    'Ready to send',
                     {
-                        body: isWaveReady
-                            ? `Your next randomized wave of ${activeWaveTarget} messages can now be sent.`
-                            : `Cooldown finished — you can now send message ${activeWaveCount + 1} of ${activeWaveTarget}.`,
+                        body: 'You can now send the next message.',
                         tag: 'broadcast-cooldown-complete'
                     }
                 )
             }
-            toast.success(
-                isWaveReady
-                    ? `Cooldown finished — the next wave of ${activeWaveTarget} messages is ready.`
-                    : `Cooldown finished — ready to send message ${activeWaveCount + 1} of ${activeWaveTarget}.`
-            )
+            toast.success('Ready to send the next message.')
         }
         previousCooldownActiveRef.current = cooldownActive
-    }, [cooldownActive, activeWaveTarget, sendState.current_wave_count, activeWaveCount])
+    }, [cooldownActive])
 
     async function armCooldownSound() {
         try {
@@ -219,7 +212,7 @@ export default function BroadcastOutreachContactsPage() {
             audioContextRef.current = context
             await context.resume()
         } catch (error) {
-            console.error('Could not arm cooldown sound', error)
+            console.error('Could not arm sound', error)
         }
     }
 
@@ -292,7 +285,7 @@ export default function BroadcastOutreachContactsPage() {
                         <div style={progressHeaderStyle}>
                             <div>
                                 <p style={eyebrowStyle}>{isWaveCooldown ? 'Next wave' : 'Current wave'}</p>
-                                <h2 style={progressTitleStyle}>{isWaveCooldown ? 'Ready after the break' : 'Messages sent'}</h2>
+                                <h2 style={progressTitleStyle}>{isWaveCooldown ? 'Break in progress' : 'Messages sent'}</h2>
                             </div>
                             <strong style={progressValueStyle}>{activeWaveCount} <span style={progressTotalStyle}>/ {activeWaveTarget}</span></strong>
                         </div>
@@ -309,10 +302,8 @@ export default function BroadcastOutreachContactsPage() {
                                 </div>
                             </div>
                             <div>
-                                <span style={waveLabelStyle}>{isWaveCooldown ? 'Next wave starts in' : isMessageCooldown ? 'Next message in' : 'Wave status'}</span>
-                                <p style={nextWaveTimeStyle}>{cooldownActive ? formatCountdown(cooldownRemainingMs) : 'Sending is available now'}</p>
-                                {isWaveCooldown && <span style={nextWaveHintStyle}>The next wave will contain {activeWaveTarget} messages.</span>}
-                                {isMessageCooldown && <span style={nextWaveHintStyle}>Randomized delay (60–90s) between messages to protect delivery.</span>}
+                                <span style={waveLabelStyle}>{isWaveCooldown ? 'Next wave in' : isMessageCooldown ? 'Next message in' : 'Status'}</span>
+                                <p style={nextWaveTimeStyle}>{cooldownActive ? formatCountdown(cooldownRemainingMs) : 'Ready to send'}</p>
                             </div>
                         </div>
                     </section>
@@ -322,8 +313,8 @@ export default function BroadcastOutreachContactsPage() {
                 {canSend && (dailyBlocked
                     ? <p style={{ color: '#9A3412', background: '#FFF7ED', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontWeight: 600, margin: '0 0 16px' }}>Daily wave limit reached ({wavesToday} / {dailyLimit} waves) — ask an admin to grant additional waves for today.</p>
                     : cooldownActive
-                    ? <p style={{ color: '#9A3412', background: '#FFF7ED', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontWeight: 600, margin: '0 0 16px' }}>{isWaveCooldown ? `Sending paused — next wave resumes in ${formatCountdown(cooldownRemainingMs)}` : `Wave cooldown — next message in ${formatCountdown(cooldownRemainingMs)} · Current wave: ${activeWaveCount} / ${activeWaveTarget} sent`} {canViewStats ? `· Waves today: ${wavesToday} / ${dailyLimit}` : ''}</p>
-                    : <p style={{ color: '#1E3A8A', background: '#EFF6FF', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontWeight: 600, margin: '0 0 16px' }}>Wave status: {sendState.current_wave_count} / {sendState.wave_target || settings.wave_min} messages sent {canViewStats ? `· Waves today: ${wavesToday} / ${dailyLimit}` : ''}</p>
+                    ? <p style={{ color: '#9A3412', background: '#FFF7ED', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontWeight: 600, margin: '0 0 16px' }}>Next message ready in: <strong>{formatCountdown(cooldownRemainingMs)}</strong></p>
+                    : <p style={{ color: '#1E3A8A', background: '#EFF6FF', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontWeight: 600, margin: '0 0 16px' }}>Ready to send {canViewStats ? `· Wave ${sendState.current_wave_count} / ${sendState.wave_target || settings.wave_min} · Waves today: ${wavesToday} / ${dailyLimit}` : ''}</p>
                 )}
 
                 {/* VIEW 1: Focused Sender Mode (When user does NOT have permission to view full dataset/table) */}
@@ -337,7 +328,7 @@ export default function BroadcastOutreachContactsPage() {
                                 </div>
                                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                                     <span style={{ fontSize: '12px', fontWeight: 600, borderRadius: '999px', padding: '5px 12px', background: cooldownActive ? '#FFF7ED' : dailyBlocked ? '#FEE2E2' : '#DCFCE7', color: cooldownActive ? '#9A3412' : dailyBlocked ? '#991B1B' : '#166534' }}>
-                                        {dailyBlocked ? 'Daily Limit Reached' : cooldownActive ? (isWaveCooldown ? 'Wave Break' : 'Message Cooldown') : 'Ready to Send'}
+                                        {dailyBlocked ? 'Daily Limit Reached' : cooldownActive ? 'Please Wait' : 'Ready to Send'}
                                     </span>
                                 </div>
                             </div>
