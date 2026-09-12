@@ -119,10 +119,6 @@ export default function BroadcastOutreachContactsPage() {
     const dailyOverride = dailyPeriodExpired ? 0 : sendState.daily_override_extra
     const dailyLimit = settings.daily_wave_target + dailyOverride
     const dailyBlocked = !dailyPeriodExpired && wavesToday >= dailyLimit
-    const sentCount = useMemo(() => contacts.filter(contact => !!contact.sent_at).length, [contacts])
-    const totalContacts = contacts.length
-    const messagesRemaining = Math.max(0, totalContacts - sentCount)
-    const messageProgress = totalContacts ? Math.round((sentCount / totalContacts) * 100) : 0
     const activeWaveTarget = sendState.wave_target || settings.wave_min
     const activeWaveCount = Math.min(sendState.current_wave_count, activeWaveTarget)
     const activeWaveProgress = activeWaveTarget ? Math.round((activeWaveCount / activeWaveTarget) * 100) : 0
@@ -203,15 +199,15 @@ export default function BroadcastOutreachContactsPage() {
                 <section style={progressCardStyle} aria-label="Broadcast progress">
                     <div style={progressHeaderStyle}>
                         <div>
-                            <p style={eyebrowStyle}>Campaign progress</p>
-                            <h2 style={progressTitleStyle}>Messages sent</h2>
+                            <p style={eyebrowStyle}>{cooldownActive ? 'Next randomized wave' : 'Active randomized wave'}</p>
+                            <h2 style={progressTitleStyle}>{cooldownActive ? 'Wave is queued' : 'Messages in this wave'}</h2>
                         </div>
-                        <strong style={progressValueStyle}>{sentCount} <span style={progressTotalStyle}>/ {totalContacts}</span></strong>
+                        <strong style={progressValueStyle}>{activeWaveCount} <span style={progressTotalStyle}>/ {activeWaveTarget}</span></strong>
                     </div>
-                    <div style={progressTrackStyle} role="progressbar" aria-label="Messages sent" aria-valuemin={0} aria-valuemax={totalContacts} aria-valuenow={sentCount}>
-                        <div style={{ ...progressFillStyle, width: `${messageProgress}%` }} />
+                    <div style={progressTrackStyle} role="progressbar" aria-label="Messages sent in this wave" aria-valuemin={0} aria-valuemax={activeWaveTarget} aria-valuenow={activeWaveCount}>
+                        <div style={{ ...progressFillStyle, width: `${activeWaveProgress}%` }} />
                     </div>
-                    <div style={progressFooterStyle}><span>{messageProgress}% complete</span><span>{messagesRemaining} remaining</span></div>
+                    <div style={progressFooterStyle}><span>{activeWaveProgress}% of this wave complete</span><span>Randomized target: {settings.wave_min}–{settings.wave_max} messages</span></div>
                     <div style={waveDividerStyle} />
                     <div style={waveGridStyle}>
                         <div>
@@ -221,10 +217,9 @@ export default function BroadcastOutreachContactsPage() {
                             </div>
                         </div>
                         <div>
-                            <div style={waveLabelRowStyle}><span style={waveLabelStyle}>{cooldownActive ? 'Next wave (queued)' : 'Current wave'}</span><strong style={waveCountStyle}>{activeWaveCount} / {activeWaveTarget} messages</strong></div>
-                            <div style={smallTrackStyle} role="progressbar" aria-label="Current wave messages sent" aria-valuemin={0} aria-valuemax={activeWaveTarget} aria-valuenow={activeWaveCount}>
-                                <div style={{ ...smallFillStyle, background: '#0074BD', width: `${activeWaveProgress}%` }} />
-                            </div>
+                            <span style={waveLabelStyle}>{cooldownActive ? 'Next wave starts in' : 'Wave status'}</span>
+                            <p style={nextWaveTimeStyle}>{cooldownActive ? formatCountdown(cooldownRemainingMs) : 'Sending is available now'}</p>
+                            {cooldownActive && <span style={nextWaveHintStyle}>The queued wave has {activeWaveTarget} assigned messages.</span>}
                         </div>
                     </div>
                 </section>
@@ -263,6 +258,8 @@ const waveLabelStyle: React.CSSProperties = { color: '#D6E5FF', fontSize: '12px'
 const waveCountStyle: React.CSSProperties = { color: '#FFF', fontSize: '13px' }
 const smallTrackStyle: React.CSSProperties = { height: '7px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(255,255,255,.22)' }
 const smallFillStyle: React.CSSProperties = { height: '100%', borderRadius: 'inherit', background: '#60D6A5', transition: 'width 300ms ease' }
+const nextWaveTimeStyle: React.CSSProperties = { color: '#FFF', fontSize: '22px', fontWeight: 700, margin: '5px 0 0', lineHeight: 1.1 }
+const nextWaveHintStyle: React.CSSProperties = { color: '#D6E5FF', fontSize: '11px', display: 'block', marginTop: '5px' }
 const fieldLabel: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: '5px', color: '#444', fontSize: '12px', fontWeight: 600 }
 const inputStyle: React.CSSProperties = { minWidth: '130px', padding: '8px 10px', border: '1px solid #DDD', borderRadius: '8px', fontSize: '13px', color: '#1A1A1A', background: '#FFF' }
 const buttonStyle: React.CSSProperties = { border: 'none', color: '#FFF', borderRadius: '8px', padding: '10px 16px', fontSize: '13px', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }
