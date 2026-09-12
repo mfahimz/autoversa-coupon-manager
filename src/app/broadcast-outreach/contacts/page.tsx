@@ -221,7 +221,7 @@ export default function BroadcastOutreachContactsPage() {
                             </div>
                         </div>
                         <div>
-                            <div style={waveLabelRowStyle}><span style={waveLabelStyle}>Current wave</span><strong style={waveCountStyle}>{activeWaveCount} / {activeWaveTarget} messages</strong></div>
+                            <div style={waveLabelRowStyle}><span style={waveLabelStyle}>{cooldownActive ? 'Next wave (queued)' : 'Current wave'}</span><strong style={waveCountStyle}>{activeWaveCount} / {activeWaveTarget} messages</strong></div>
                             <div style={smallTrackStyle} role="progressbar" aria-label="Current wave messages sent" aria-valuemin={0} aria-valuemax={activeWaveTarget} aria-valuenow={activeWaveCount}>
                                 <div style={{ ...smallFillStyle, background: '#0074BD', width: `${activeWaveProgress}%` }} />
                             </div>
