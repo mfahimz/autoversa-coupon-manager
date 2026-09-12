@@ -169,21 +169,78 @@ export default function BroadcastOutreachContactsPage() {
 
     useEffect(() => { setPage(1) }, [yearFilter, showSent, pageSize])
 
+    useEffect(() => {
+        const unlockAudio = () => {
+            if (!audioContextRef.current) {
+                const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+                if (AudioCtx) audioContextRef.current = new AudioCtx()
+            }
+            if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+                void audioContextRef.current.resume()
+            }
+        }
+        window.addEventListener('click', unlockAudio, { once: true })
+        window.addEventListener('keydown', unlockAudio, { once: true })
+        return () => {
+            window.removeEventListener('click', unlockAudio)
+            window.removeEventListener('keydown', unlockAudio)
+        }
+    }, [])
+
     function playCooldownCompleteSound() {
         try {
+            if (!audioContextRef.current) {
+                const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+                if (AudioCtx) audioContextRef.current = new AudioCtx()
+            }
             const context = audioContextRef.current
-            if (!context || context.state !== 'running') return
-            const start = context.currentTime
-            ;[0, 0.3, 0.6].forEach((offset, index) => {
-                const oscillator = context.createOscillator()
-                const gain = context.createGain()
-                oscillator.frequency.value = index === 2 ? 1046.5 : 880
-                gain.gain.setValueAtTime(0.0001, start + offset)
-                gain.gain.exponentialRampToValueAtTime(0.16, start + offset + 0.02)
-                gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + 0.22)
-                oscillator.connect(gain).connect(context.destination)
-                oscillator.start(start + offset)
-                oscillator.stop(start + offset + 0.24)
+            if (!context) return
+            if (context.state === 'suspended') {
+                void context.resume()
+            }
+            const start = context.currentTime + 0.05
+
+            // 5-note melodic ascending chime progression (C5 -> E5 -> G5 -> C6 -> E6 resolve)
+            // Lasts ~1.7 seconds: audible, crystal clear, pleasant, and impossible to miss
+            const notes = [
+                { freq: 523.25, time: 0.0,  duration: 0.45, gain: 0.38 }, // C5
+                { freq: 659.25, time: 0.22, duration: 0.45, gain: 0.40 }, // E5
+                { freq: 783.99, time: 0.44, duration: 0.50, gain: 0.45 }, // G5
+                { freq: 1046.50, time: 0.68, duration: 0.60, gain: 0.50 }, // C6
+                { freq: 1318.51, time: 0.95, duration: 0.75, gain: 0.52 }, // E6 sparkle finish
+            ]
+
+            notes.forEach(({ freq, time, duration, gain: peakGain }) => {
+                const noteStart = start + time
+                const noteEnd = noteStart + duration
+
+                // Primary tone (warm fundamental sine)
+                const osc1 = context.createOscillator()
+                const gain1 = context.createGain()
+                osc1.type = 'sine'
+                osc1.frequency.setValueAtTime(freq, noteStart)
+
+                gain1.gain.setValueAtTime(0.0001, noteStart)
+                gain1.gain.exponentialRampToValueAtTime(peakGain, noteStart + 0.02)
+                gain1.gain.exponentialRampToValueAtTime(0.0001, noteEnd)
+
+                osc1.connect(gain1).connect(context.destination)
+                osc1.start(noteStart)
+                osc1.stop(noteEnd)
+
+                // Shimmer harmonic (bright bell overtone for clarity and ear-catchiness)
+                const osc2 = context.createOscillator()
+                const gain2 = context.createGain()
+                osc2.type = 'triangle'
+                osc2.frequency.setValueAtTime(freq * 2, noteStart)
+
+                gain2.gain.setValueAtTime(0.0001, noteStart)
+                gain2.gain.exponentialRampToValueAtTime(peakGain * 0.28, noteStart + 0.015)
+                gain2.gain.exponentialRampToValueAtTime(0.0001, noteStart + duration * 0.55)
+
+                osc2.connect(gain2).connect(context.destination)
+                osc2.start(noteStart)
+                osc2.stop(noteStart + duration * 0.55)
             })
         } catch (error) { console.error('Cooldown alert sound failed', error) }
     }
@@ -208,9 +265,12 @@ export default function BroadcastOutreachContactsPage() {
 
     async function armCooldownSound() {
         try {
-            const context = audioContextRef.current ?? new AudioContext()
+            const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+            const context = audioContextRef.current ?? (AudioCtx ? new AudioCtx() : null)
             audioContextRef.current = context
-            await context.resume()
+            if (context && context.state === 'suspended') {
+                await context.resume()
+            }
         } catch (error) {
             console.error('Could not arm sound', error)
         }
