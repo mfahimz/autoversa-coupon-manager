@@ -161,6 +161,8 @@ async function parseNumbers(file: File, extension: string) {
     return processRows(rows)
 }
 
+const CONTACT_LIMIT = 2000
+
 export async function POST(request: NextRequest) {
     const cookieStore = cookies()
     const supabase = createServerClient<Database>(
@@ -233,17 +235,41 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'No valid mobile numbers were found in the file.' }, { status: 400 })
     }
 
-    if (mode === 'preview') {
-        return NextResponse.json({ validCount: numbers.length, invalidCount, duplicateCount, sample: numbers.slice(0, 10) })
-    }
-    if (mode !== 'import') {
-        return NextResponse.json({ error: 'Invalid upload mode' }, { status: 400 })
-    }
-
+    // Check capacity against the 2000 contact limit
     const serviceSupabase = createClient<Database>(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
         process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
+
+    const { count: existingCount, error: countError } = await serviceSupabase
+        .from('broadcast_contacts')
+        .select('*', { count: 'exact', head: true })
+
+    if (countError) {
+        return NextResponse.json({ error: 'Unable to check contact capacity.' }, { status: 500 })
+    }
+
+    const currentCount = existingCount ?? 0
+    const remaining = Math.max(0, CONTACT_LIMIT - currentCount)
+
+    if (numbers.length > remaining) {
+        return NextResponse.json({
+            error: remaining === 0
+                ? `The contact list is full (${CONTACT_LIMIT.toLocaleString()} contacts). Please clear existing contacts before uploading.`
+                : `Only ${remaining.toLocaleString()} more contact${remaining === 1 ? '' : 's'} can be uploaded (${currentCount.toLocaleString()} / ${CONTACT_LIMIT.toLocaleString()} used). Your file contains ${numbers.length.toLocaleString()} valid numbers. Please try again with a smaller file or clear existing contacts.`,
+            currentCount,
+            limit: CONTACT_LIMIT,
+            remaining,
+            fileCount: numbers.length,
+        }, { status: 400 })
+    }
+
+    if (mode === 'preview') {
+        return NextResponse.json({ validCount: numbers.length, invalidCount, duplicateCount, sample: numbers.slice(0, 10), currentCount, limit: CONTACT_LIMIT, remaining })
+    }
+    if (mode !== 'import') {
+        return NextResponse.json({ error: 'Invalid upload mode' }, { status: 400 })
+    }
 
     const rows = numbers.map(mobile_number => ({ mobile_number, year, created_by: user.id }))
     const BATCH_SIZE = 1000

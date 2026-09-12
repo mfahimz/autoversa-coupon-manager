@@ -47,6 +47,9 @@ interface ContactUploadPreview {
     invalidCount: number
     duplicateCount: number
     sample: string[]
+    currentCount: number
+    limit: number
+    remaining: number
 }
 
 export default function AdminSettingsPage() {
@@ -252,8 +255,8 @@ export default function AdminSettingsPage() {
             const response = await fetch('/api/broadcast-outreach/upload', { method: 'POST', body: formData })
             const result = await response.json()
             if (!response.ok) throw new Error(result.error ?? 'Unable to parse the contact list.')
-            const { validCount, invalidCount, duplicateCount, sample } = result as Omit<ContactUploadPreview, 'file' | 'fileName' | 'year'>
-            setContactUploadPreview({ file, fileName: file.name, year, validCount, invalidCount, duplicateCount, sample })
+            const { validCount, invalidCount, duplicateCount, sample, currentCount, limit, remaining } = result as Omit<ContactUploadPreview, 'file' | 'fileName' | 'year'>
+            setContactUploadPreview({ file, fileName: file.name, year, validCount, invalidCount, duplicateCount, sample, currentCount, limit, remaining })
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Unable to parse the contact list.'
             showToast(message, 'error')
@@ -685,7 +688,7 @@ export default function AdminSettingsPage() {
                                         <span style={{ color: '#166534', background: '#DCFCE7', borderRadius: '999px', padding: '5px 9px', fontSize: '12px', fontWeight: 700 }}>{contactUploadPreview.validCount} ready to import</span>
                                     </div>
                                     <div style={{ padding: '14px 16px' }}>
-                                        <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', color: '#44546F', fontSize: '12px', marginBottom: '12px' }}><span><strong style={{ color: '#1A1A1A' }}>{contactUploadPreview.validCount}</strong> valid numbers</span><span><strong style={{ color: contactUploadPreview.invalidCount ? '#B45309' : '#1A1A1A' }}>{contactUploadPreview.invalidCount}</strong> invalid rows</span><span><strong style={{ color: contactUploadPreview.duplicateCount ? '#B45309' : '#1A1A1A' }}>{contactUploadPreview.duplicateCount}</strong> duplicates skipped</span></div>
+                                        <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', color: '#44546F', fontSize: '12px', marginBottom: '12px' }}><span><strong style={{ color: '#1A1A1A' }}>{contactUploadPreview.validCount}</strong> valid numbers</span><span><strong style={{ color: contactUploadPreview.invalidCount ? '#B45309' : '#1A1A1A' }}>{contactUploadPreview.invalidCount}</strong> invalid rows</span><span><strong style={{ color: contactUploadPreview.duplicateCount ? '#B45309' : '#1A1A1A' }}>{contactUploadPreview.duplicateCount}</strong> duplicates skipped</span><span style={{ borderLeft: '1px solid #CBD5E1', paddingLeft: '10px' }}>Capacity: <strong style={{ color: '#1A1A1A' }}>{contactUploadPreview.currentCount.toLocaleString()}</strong> / {contactUploadPreview.limit.toLocaleString()} used · <strong style={{ color: contactUploadPreview.remaining < contactUploadPreview.validCount ? '#DC2626' : '#166534' }}>{contactUploadPreview.remaining.toLocaleString()}</strong> remaining</span></div>
                                         <p style={{ color: '#44546F', fontSize: '12px', fontWeight: 700, margin: '0 0 7px' }}>First {contactUploadPreview.sample.length} numbers</p>
                                         <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>{contactUploadPreview.sample.map(number => <code key={number} style={{ background: '#EAF2FF', color: '#1E4D8E', borderRadius: '5px', padding: '4px 6px', fontSize: '11px' }}>{number}</code>)}</div>
                                         <div style={{ display: 'flex', gap: '10px', marginTop: '16px', flexWrap: 'wrap' }}><button onClick={approveContactImport} disabled={importingContacts} style={{ padding: '9px 16px', background: importingContacts ? '#93C5E8' : '#0074BD', color: '#FFF', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: 600, cursor: importingContacts ? 'not-allowed' : 'pointer' }}>{importingContacts ? 'Importing…' : `Approve & Import ${contactUploadPreview.validCount} Contacts`}</button><button onClick={() => setContactUploadPreview(null)} disabled={importingContacts} style={{ padding: '9px 16px', background: '#FFF', color: '#44546F', border: '1px solid #CBD5E1', borderRadius: '8px', fontSize: '13px', fontWeight: 600, cursor: importingContacts ? 'not-allowed' : 'pointer' }}>Cancel</button></div>
