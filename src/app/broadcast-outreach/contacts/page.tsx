@@ -336,7 +336,9 @@ export default function BroadcastOutreachContactsPage() {
                         </p>
                     </div>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                        <button onClick={playCooldownCompleteSound} style={{ ...buttonStyle, background: '#F0F4F8', color: '#162860', border: '1px solid #CBD5E1', cursor: 'pointer' }}>🔔 Test Alert Sound</button>
+                        {userRole === 'ADMIN' && (
+                            <button onClick={playCooldownCompleteSound} style={{ ...buttonStyle, background: '#F0F4F8', color: '#162860', border: '1px solid #CBD5E1', cursor: 'pointer' }}>🔔 Test Alert Sound</button>
+                        )}
                         <button onClick={copyImage} disabled={!settings.image_url || copying} style={{ ...buttonStyle, background: settings.image_url ? '#0074BD' : '#CCC', cursor: settings.image_url ? 'pointer' : 'not-allowed' }}>{copying ? 'Copying…' : 'Copy Image'}</button>
                     </div>
                 </div>
