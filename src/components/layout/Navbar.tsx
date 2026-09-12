@@ -38,6 +38,14 @@ export default function Navbar() {
     const [permissionsLoaded, setPermissionsLoaded] = useState(false)
     const closeDropdownTimer = useRef<NodeJS.Timeout | null>(null)
 
+    function requestBroadcastNotificationPermission(userId: string, userRole: string, userPermissions: PermissionsMap) {
+        const canAccessBroadcast = checkPermission(userPermissions, userRole, 'page:broadcast-outreach-overview', 'view') || checkPermission(userPermissions, userRole, 'page:broadcast-outreach-contacts', 'view')
+        const requestKey = `broadcast_notification_permission_requested_${userId}`
+        if (!canAccessBroadcast || !('Notification' in window) || Notification.permission !== 'default' || localStorage.getItem(requestKey)) return
+        localStorage.setItem(requestKey, 'true')
+        Notification.requestPermission().catch(error => console.warn('Notification permission request failed:', error))
+    }
+
     useEffect(() => {
         async function init() {
             try {
@@ -60,6 +68,7 @@ export default function Navbar() {
                     setRole(cachedData.role)
                     setPermissions(cachedData.permissions)
                     setPermissionsLoaded(true)
+                    requestBroadcastNotificationPermission(user.id, cachedData.role, cachedData.permissions)
                     return
                 }
 
@@ -76,6 +85,7 @@ export default function Navbar() {
                 const perms = await loadPermissionsForRole(r)
                 setPermissions(perms)
                 setPermissionsLoaded(true)
+                requestBroadcastNotificationPermission(user.id, r, perms)
 
                 try {
                     sessionStorage.setItem(cacheKey, JSON.stringify({ role: r, permissions: perms }))
