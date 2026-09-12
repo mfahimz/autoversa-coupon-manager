@@ -367,6 +367,62 @@ export type Database = {
           },
         ]
       }
+      broadcast_wave_logs: {
+        Row: {
+          completed_at: string
+          completed_by: string | null
+          completed_by_name: string | null
+          cooldown_minutes: number | null
+          cooldown_until: string | null
+          created_at: string
+          daily_period_started_at: string
+          daily_wave_number: number
+          duration_seconds: number
+          id: string
+          message_target: number
+          messages_sent: number
+          started_at: string
+        }
+        Insert: {
+          completed_at: string
+          completed_by?: string | null
+          completed_by_name?: string | null
+          cooldown_minutes?: number | null
+          cooldown_until?: string | null
+          created_at?: string
+          daily_period_started_at: string
+          daily_wave_number: number
+          duration_seconds: number
+          id?: string
+          message_target: number
+          messages_sent: number
+          started_at: string
+        }
+        Update: {
+          completed_at?: string
+          completed_by?: string | null
+          completed_by_name?: string | null
+          cooldown_minutes?: number | null
+          cooldown_until?: string | null
+          created_at?: string
+          daily_period_started_at?: string
+          daily_wave_number?: number
+          duration_seconds?: number
+          id?: string
+          message_target?: number
+          messages_sent?: number
+          started_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "broadcast_wave_logs_completed_by_fkey"
+            columns: ["completed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       broadcast_send_state: {
         Row: {
           cooldown_until: string | null

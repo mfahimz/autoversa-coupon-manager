@@ -24,6 +24,30 @@ type Stats = {
     sentThisMonth: number
 }
 
+type WaveLog = {
+    id: string
+    daily_period_started_at: string
+    daily_wave_number: number
+    message_target: number
+    messages_sent: number
+    started_at: string
+    completed_at: string
+    duration_seconds: number
+    cooldown_until: string | null
+    cooldown_minutes: number | null
+    completed_by_name: string | null
+}
+
+function formatDuration(seconds: number) {
+    const minutes = Math.floor(seconds / 60)
+    const remainingSeconds = seconds % 60
+    return minutes ? `${minutes}m ${remainingSeconds}s` : `${remainingSeconds}s`
+}
+
+function formatDateTime(value: string) {
+    return new Date(value).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+}
+
 function StatCard({ label, value, color, loading }: { label: string; value: number; color: string; loading: boolean }) {
     return (
         <div style={{ background: 'linear-gradient(180deg, #FFFFFF 0%, #FCFCFC 100%)', borderRadius: '16px', padding: '20px 22px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', border: '1px solid #F0F0F0', position: 'relative', overflow: 'hidden' }}>
@@ -39,6 +63,7 @@ export default function BroadcastOutreachOverviewPage() {
     const [loading, setLoading] = useState(true)
     const [stats, setStats] = useState<Stats>({ total: 0, totalSent: 0, sentToday: 0, sentThisMonth: 0 })
     const [byYear, setByYear] = useState<{ year: number; total: number; sent: number }[]>([])
+    const [waveLogs, setWaveLogs] = useState<WaveLog[]>([])
 
     useEffect(() => {
         async function init() {
@@ -49,9 +74,12 @@ export default function BroadcastOutreachOverviewPage() {
             const permissions = await loadPermissionsForRole(profile.user_role)
             if (!checkPermission(permissions, profile.user_role, 'page:broadcast-outreach-overview', 'view')) { router.push('/dashboard'); return }
 
-            const { data, error } = await supabase.from('broadcast_contacts').select('id, year, sent_at')
-            if (!error) {
-                const contacts = (data ?? []) as BroadcastContact[]
+            const [contactsResult, waveLogsResult] = await Promise.all([
+                supabase.from('broadcast_contacts').select('id, year, sent_at'),
+                supabase.from('broadcast_wave_logs').select('id, daily_period_started_at, daily_wave_number, message_target, messages_sent, started_at, completed_at, duration_seconds, cooldown_until, cooldown_minutes, completed_by_name').order('completed_at', { ascending: false }),
+            ])
+            if (!contactsResult.error) {
+                const contacts = (contactsResult.data ?? []) as BroadcastContact[]
                 const now = new Date()
                 // This mirrors the dashboard's browser-local calendar convention.
                 const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
@@ -72,6 +100,7 @@ export default function BroadcastOutreachOverviewPage() {
                 })
                 setByYear(Array.from(grouped.entries()).map(([year, value]) => ({ year, ...value })).sort((a, b) => b.year - a.year))
             }
+            if (!waveLogsResult.error) setWaveLogs((waveLogsResult.data ?? []) as WaveLog[])
             setLoading(false)
         }
         init()
@@ -101,6 +130,15 @@ export default function BroadcastOutreachOverviewPage() {
                             <thead><tr style={{ background: '#162860', color: '#FFF', fontSize: '12px', textTransform: 'uppercase' }}><th style={headerCell}>Year</th><th style={headerCell}>Total Contacts</th><th style={headerCell}>Sent</th><th style={headerCell}>Remaining</th></tr></thead>
                             <tbody>{byYear.map(row => <tr key={row.year} style={{ borderBottom: '1px solid #F5F5F5' }}><td style={cell}>{row.year}</td><td style={cell}>{row.total.toLocaleString()}</td><td style={cell}>{row.sent.toLocaleString()}</td><td style={cell}>{(row.total - row.sent).toLocaleString()}</td></tr>)}</tbody>
                         </table>
+                    )}
+                </section>
+                <section style={{ background: '#FFF', borderRadius: '16px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', overflow: 'hidden', marginTop: '24px' }}>
+                    <div style={{ padding: '20px 24px', borderBottom: '1px solid #F0F0F0' }}><h2 style={{ fontSize: '16px', fontWeight: 700, color: '#1A1A1A', margin: 0 }}>Wave Performance Log</h2><p style={{ fontSize: '13px', color: '#666', margin: '5px 0 0' }}>A record is created whenever a randomized wave is completed.</p></div>
+                    {loading ? <div style={{ padding: '28px 24px', color: '#666', fontSize: '14px' }}>Loading wave logs…</div> : waveLogs.length === 0 ? <div style={{ padding: '28px 24px', color: '#666', fontSize: '14px' }}>No completed waves yet. Completed randomized waves will appear here.</div> : (
+                        <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', minWidth: '1060px', borderCollapse: 'collapse', textAlign: 'left' }}>
+                            <thead><tr style={{ background: '#162860', color: '#FFF', fontSize: '12px', textTransform: 'uppercase' }}><th style={headerCell}>Wave</th><th style={headerCell}>Messages</th><th style={headerCell}>Started</th><th style={headerCell}>Completed</th><th style={headerCell}>Time Taken</th><th style={headerCell}>Next Cooldown</th><th style={headerCell}>Completed By</th></tr></thead>
+                            <tbody>{waveLogs.map(log => <tr key={log.id} style={{ borderBottom: '1px solid #F5F5F5' }}><td style={cell}><strong>#{log.daily_wave_number}</strong><span style={{ display: 'block', color: '#777', fontSize: '12px', marginTop: '3px' }}>{new Date(log.daily_period_started_at).toLocaleDateString('en-GB')}</span></td><td style={cell}><strong>{log.messages_sent} / {log.message_target}</strong><span style={{ display: 'block', color: '#777', fontSize: '12px', marginTop: '3px' }}>Randomized target</span></td><td style={cell}>{formatDateTime(log.started_at)}</td><td style={cell}>{formatDateTime(log.completed_at)}</td><td style={cell}>{formatDuration(log.duration_seconds)}</td><td style={cell}>{log.cooldown_minutes !== null ? `${log.cooldown_minutes} min` : '—'}{log.cooldown_until && <span style={{ display: 'block', color: '#777', fontSize: '12px', marginTop: '3px' }}>Until {formatDateTime(log.cooldown_until)}</span>}</td><td style={cell}>{log.completed_by_name || '—'}</td></tr>)}</tbody>
+                        </table></div>
                     )}
                 </section>
             </main>
