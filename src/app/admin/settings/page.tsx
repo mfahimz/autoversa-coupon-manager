@@ -720,6 +720,7 @@ export default function AdminSettingsPage() {
                                     <div><label style={{ ...labelStyle, fontSize: '12px' }}>Daily wave target</label><input type="number" min={1} value={dailyWaveTarget} onChange={e => setDailyWaveTarget(e.target.value)} style={{ ...inputStyle, width: '160px' }} /></div>
                                 </div>
                                 <p style={{ fontSize: '11px', color: '#888', margin: '8px 0 0' }}>Number of completed waves allowed per rolling 24h period (waves, not individual messages — wave size is randomized above). Sends hard-block once this is reached.</p>
+                                <p style={{ fontSize: '11px', color: '#0074BD', margin: '6px 0 0', fontWeight: 600 }}>Note: Within each active wave, individual messages also pause with a randomized cooldown between 60 and 90 seconds to protect delivery.</p>
                                 <div style={{ marginTop: '12px' }}><button onClick={saveThrottleSettings} disabled={savingThrottle} style={{ padding: '9px 18px', backgroundColor: savingThrottle ? '#93C5E8' : '#0074BD', color: '#FFF', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: savingThrottle ? 'not-allowed' : 'pointer' }}>{savingThrottle ? 'Saving…' : 'Save Throttle Settings'}</button></div>
                             </div>
                             <div style={{ paddingTop: '20px', borderTop: '1px solid #F0F0F0' }}>

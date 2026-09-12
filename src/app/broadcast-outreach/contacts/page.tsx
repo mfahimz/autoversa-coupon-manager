@@ -129,6 +129,8 @@ export default function BroadcastOutreachContactsPage() {
 
     const cooldownActive = !!sendState.cooldown_until && new Date(sendState.cooldown_until).getTime() > now
     const cooldownRemainingMs = cooldownActive ? new Date(sendState.cooldown_until!).getTime() - now : 0
+    const isWaveCooldown = cooldownActive && sendState.current_wave_count === 0
+    const isMessageCooldown = cooldownActive && sendState.current_wave_count > 0
 
     const dailyPeriodExpired = !sendState.daily_period_started_at || now - new Date(sendState.daily_period_started_at).getTime() >= 24 * 60 * 60 * 1000
     const wavesToday = dailyPeriodExpired ? 0 : sendState.waves_completed_today
@@ -179,13 +181,26 @@ export default function BroadcastOutreachContactsPage() {
         const wasCoolingDown = previousCooldownActiveRef.current
         if (wasCoolingDown && !cooldownActive) {
             playCooldownCompleteSound()
+            const isWaveReady = sendState.current_wave_count === 0
             if ('Notification' in window && Notification.permission === 'granted') {
-                new Notification('Broadcast wave is ready', { body: `Your next randomized wave of ${activeWaveTarget} messages can now be sent.`, tag: 'broadcast-cooldown-complete' })
+                new Notification(
+                    isWaveReady ? 'Broadcast wave is ready' : 'Next message ready',
+                    {
+                        body: isWaveReady
+                            ? `Your next randomized wave of ${activeWaveTarget} messages can now be sent.`
+                            : `Cooldown finished — you can now send message ${activeWaveCount + 1} of ${activeWaveTarget}.`,
+                        tag: 'broadcast-cooldown-complete'
+                    }
+                )
             }
-            toast.success(`Cooldown finished — the next wave of ${activeWaveTarget} messages is ready.`)
+            toast.success(
+                isWaveReady
+                    ? `Cooldown finished — the next wave of ${activeWaveTarget} messages is ready.`
+                    : `Cooldown finished — ready to send message ${activeWaveCount + 1} of ${activeWaveTarget}.`
+            )
         }
         previousCooldownActiveRef.current = cooldownActive
-    }, [cooldownActive, activeWaveTarget])
+    }, [cooldownActive, activeWaveTarget, sendState.current_wave_count, activeWaveCount])
 
     async function armCooldownSound() {
         try {
@@ -257,8 +272,8 @@ export default function BroadcastOutreachContactsPage() {
                 <section style={progressCardStyle} aria-label="Broadcast progress">
                     <div style={progressHeaderStyle}>
                         <div>
-                            <p style={eyebrowStyle}>{cooldownActive ? 'Next wave' : 'Current wave'}</p>
-                            <h2 style={progressTitleStyle}>{cooldownActive ? 'Ready after the break' : 'Messages sent'}</h2>
+                            <p style={eyebrowStyle}>{isWaveCooldown ? 'Next wave' : 'Current wave'}</p>
+                            <h2 style={progressTitleStyle}>{isWaveCooldown ? 'Ready after the break' : 'Messages sent'}</h2>
                         </div>
                         <strong style={progressValueStyle}>{activeWaveCount} <span style={progressTotalStyle}>/ {activeWaveTarget}</span></strong>
                     </div>
@@ -275,16 +290,17 @@ export default function BroadcastOutreachContactsPage() {
                             </div>
                         </div>
                         <div>
-                            <span style={waveLabelStyle}>{cooldownActive ? 'Next wave starts in' : 'Wave status'}</span>
+                            <span style={waveLabelStyle}>{isWaveCooldown ? 'Next wave starts in' : isMessageCooldown ? 'Next message in' : 'Wave status'}</span>
                             <p style={nextWaveTimeStyle}>{cooldownActive ? formatCountdown(cooldownRemainingMs) : 'Sending is available now'}</p>
-                            {cooldownActive && <span style={nextWaveHintStyle}>The next wave will contain {activeWaveTarget} messages.</span>}
+                            {isWaveCooldown && <span style={nextWaveHintStyle}>The next wave will contain {activeWaveTarget} messages.</span>}
+                            {isMessageCooldown && <span style={nextWaveHintStyle}>Randomized delay (60–90s) between messages to protect delivery.</span>}
                         </div>
                     </div>
                 </section>
                 {canSend && (dailyBlocked
                     ? <p style={{ color: '#9A3412', background: '#FFF7ED', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontWeight: 600, margin: '0 0 16px' }}>Daily wave limit reached ({wavesToday} / {dailyLimit} waves) — ask an admin to grant additional waves for today.</p>
                     : cooldownActive
-                    ? <p style={{ color: '#9A3412', background: '#FFF7ED', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontWeight: 600, margin: '0 0 16px' }}>Sending paused — resumes in {formatCountdown(cooldownRemainingMs)} · Waves today: {wavesToday} / {dailyLimit}</p>
+                    ? <p style={{ color: '#9A3412', background: '#FFF7ED', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontWeight: 600, margin: '0 0 16px' }}>{isWaveCooldown ? `Sending paused — next wave resumes in ${formatCountdown(cooldownRemainingMs)}` : `Wave cooldown — next message in ${formatCountdown(cooldownRemainingMs)} · Current wave: ${activeWaveCount} / ${activeWaveTarget} sent`} · Waves today: {wavesToday} / {dailyLimit}</p>
                     : <p style={{ color: '#1E3A8A', background: '#EFF6FF', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontWeight: 600, margin: '0 0 16px' }}>Wave: {sendState.current_wave_count} / {sendState.wave_target || settings.wave_min} messages sent · Waves today: {wavesToday} / {dailyLimit}</p>
                 )}
                 <section style={cardStyle}>
