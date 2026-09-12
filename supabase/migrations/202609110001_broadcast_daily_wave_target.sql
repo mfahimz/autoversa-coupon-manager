@@ -1,10 +1,10 @@
 ALTER TABLE broadcast_settings
-  ADD COLUMN daily_wave_target integer NOT NULL DEFAULT 20;
+  ADD COLUMN IF NOT EXISTS daily_wave_target integer NOT NULL DEFAULT 20;
 
 ALTER TABLE broadcast_send_state
-  ADD COLUMN waves_completed_today integer NOT NULL DEFAULT 0,
-  ADD COLUMN daily_period_started_at timestamptz,
-  ADD COLUMN daily_override_extra integer NOT NULL DEFAULT 0;
+  ADD COLUMN IF NOT EXISTS waves_completed_today integer NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS daily_period_started_at timestamptz,
+  ADD COLUMN IF NOT EXISTS daily_override_extra integer NOT NULL DEFAULT 0;
 
 DROP FUNCTION IF EXISTS public.advance_broadcast_send_state();
 

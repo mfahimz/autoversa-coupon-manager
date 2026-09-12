@@ -1,4 +1,6 @@
-CREATE OR REPLACE FUNCTION public.advance_broadcast_send_state()
+DROP FUNCTION IF EXISTS public.advance_broadcast_send_state();
+
+CREATE FUNCTION public.advance_broadcast_send_state()
 RETURNS TABLE (
   current_wave_count integer,
   wave_target integer,

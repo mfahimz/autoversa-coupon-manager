@@ -14,6 +14,35 @@ function normalisePhone(value: unknown) {
     return digits.length >= 7 && digits.length <= 15 ? digits : null
 }
 
+async function parseNumbers(file: File, extension: string) {
+    let values: unknown[] = []
+    if (extension === 'csv') {
+        const text = await file.text()
+        const parsed = Papa.parse<string[]>(text, { skipEmptyLines: true })
+        values = parsed.data.map(row => row[0])
+    } else {
+        const workbook = new ExcelJS.Workbook()
+        await workbook.xlsx.load(await file.arrayBuffer())
+        const worksheet = workbook.worksheets[0]
+        if (!worksheet) throw new Error('No worksheet found')
+        values = worksheet.getColumn(1).values.slice(1) as unknown[]
+    }
+
+    let invalidCount = 0
+    const seen = new Set<string>()
+    let duplicateCount = 0
+    const numbers = values.reduce<string[]>((valid, value) => {
+        const phone = normalisePhone(value)
+        if (phone) {
+            if (seen.has(phone)) duplicateCount += 1
+            else { seen.add(phone); valid.push(phone) }
+        } else if (String(value ?? '').trim()) invalidCount += 1
+        return valid
+    }, [])
+
+    return { numbers, invalidCount, duplicateCount }
+}
+
 export async function POST(request: NextRequest) {
     const cookieStore = cookies()
     const supabase = createServerClient<Database>(
@@ -58,6 +87,7 @@ export async function POST(request: NextRequest) {
 
     const file = formData.get('file')
     const yearRaw = formData.get('year')
+    const mode = formData.get('mode')
     if (!(file instanceof File)) {
         return NextResponse.json({ error: 'file is required' }, { status: 400 })
     }
@@ -72,33 +102,24 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Upload a CSV or XLSX file.' }, { status: 400 })
     }
 
-    let values: unknown[] = []
+    let parsed: { numbers: string[]; invalidCount: number; duplicateCount: number }
     try {
-        if (extension === 'csv') {
-            const text = await file.text()
-            const parsed = Papa.parse<string[]>(text, { skipEmptyLines: true })
-            values = parsed.data.map(row => row[0])
-        } else {
-            const workbook = new ExcelJS.Workbook()
-            await workbook.xlsx.load(await file.arrayBuffer())
-            const worksheet = workbook.worksheets[0]
-            if (!worksheet) throw new Error('No worksheet found')
-            values = worksheet.getColumn(1).values.slice(1) as unknown[]
-        }
+        parsed = await parseNumbers(file, extension)
     } catch {
         return NextResponse.json({ error: 'Unable to parse the uploaded file.' }, { status: 400 })
     }
 
-    let invalidCount = 0
-    const numbers = values.reduce<string[]>((valid, value) => {
-        const phone = normalisePhone(value)
-        if (phone) valid.push(phone)
-        else if (String(value ?? '').trim()) invalidCount += 1
-        return valid
-    }, [])
+    const { numbers, invalidCount, duplicateCount } = parsed
 
     if (numbers.length === 0) {
         return NextResponse.json({ error: 'No valid mobile numbers were found in the file.' }, { status: 400 })
+    }
+
+    if (mode === 'preview') {
+        return NextResponse.json({ validCount: numbers.length, invalidCount, duplicateCount, sample: numbers.slice(0, 10) })
+    }
+    if (mode !== 'import') {
+        return NextResponse.json({ error: 'Invalid upload mode' }, { status: 400 })
     }
 
     const serviceSupabase = createClient<Database>(
@@ -116,5 +137,5 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: insertError.message }, { status: 500 })
     }
 
-    return NextResponse.json({ insertedCount: inserted?.length ?? 0, invalidCount })
+    return NextResponse.json({ insertedCount: inserted?.length ?? 0, invalidCount, duplicateCount })
 }

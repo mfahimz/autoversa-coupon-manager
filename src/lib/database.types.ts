@@ -1331,6 +1331,18 @@ export type Database = {
           waves_completed_today: number
         }[]
       }
+      record_broadcast_contact_sent: {
+        Args: { p_contact_id: string }
+        Returns: {
+          sent_at: string
+          cooldown_until: string
+          current_wave_count: number
+          daily_override_extra: number
+          daily_period_started_at: string
+          wave_target: number
+          waves_completed_today: number
+        }[]
+      }
       advance_m_coupon_stage: { Args: { p_b_coupon_id: string }; Returns: Json }
       get_advisor_leaderboard: {
         Args: never

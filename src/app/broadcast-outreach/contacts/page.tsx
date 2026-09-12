@@ -119,6 +119,14 @@ export default function BroadcastOutreachContactsPage() {
     const dailyOverride = dailyPeriodExpired ? 0 : sendState.daily_override_extra
     const dailyLimit = settings.daily_wave_target + dailyOverride
     const dailyBlocked = !dailyPeriodExpired && wavesToday >= dailyLimit
+    const sentCount = useMemo(() => contacts.filter(contact => !!contact.sent_at).length, [contacts])
+    const totalContacts = contacts.length
+    const messagesRemaining = Math.max(0, totalContacts - sentCount)
+    const messageProgress = totalContacts ? Math.round((sentCount / totalContacts) * 100) : 0
+    const activeWaveTarget = sendState.wave_target || settings.wave_min
+    const activeWaveCount = Math.min(sendState.current_wave_count, activeWaveTarget)
+    const activeWaveProgress = activeWaveTarget ? Math.round((activeWaveCount / activeWaveTarget) * 100) : 0
+    const waveProgress = dailyLimit ? Math.min(100, Math.round((wavesToday / dailyLimit) * 100)) : 0
 
     const canSend = checkPermission(permissions, userRole, 'action:broadcast_contacts:send_message', 'action')
     const canFilterByYear = checkPermission(permissions, userRole, 'action:broadcast_contacts:filter_by_year', 'action')
@@ -156,10 +164,18 @@ export default function BroadcastOutreachContactsPage() {
         } finally { setCopying(false) }
     }
 
-    async function advanceSendState() {
-        const { data, error } = await supabase.rpc('advance_broadcast_send_state')
+    async function sendMessage(contact: BroadcastContact) {
+        if (!canSend || !userId || cooldownActive || dailyBlocked) return
+        if (!settings.message_template?.trim()) { toast.error('Ask an admin to configure the broadcast message template first.'); return }
+        setUpdatingId(contact.id)
+        const phone = contact.mobile_number.replace(/\D/g, '')
+        window.open(`https://web.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(settings.message_template)}`, '_blank')
+        const { data, error } = await supabase.rpc('record_broadcast_contact_sent', { p_contact_id: contact.id })
         const result = data?.[0]
-        if (!error && result) {
+        if (error || !result) toast.error(error?.message ?? 'WhatsApp opened, but the sent status could not be saved.')
+        else {
+            const sentAt = result.sent_at ?? new Date().toISOString()
+            setContacts(previous => previous.map(item => item.id === contact.id ? { ...item, sent_at: sentAt, sent_by: userId } : item))
             setSendState(previous => ({
                 ...previous,
                 current_wave_count: result.current_wave_count,
@@ -169,22 +185,7 @@ export default function BroadcastOutreachContactsPage() {
                 daily_period_started_at: result.daily_period_started_at,
                 daily_override_extra: result.daily_override_extra,
             }))
-        }
-    }
-
-    async function sendMessage(contact: BroadcastContact) {
-        if (!canSend || !userId || cooldownActive || dailyBlocked) return
-        if (!settings.message_template?.trim()) { toast.error('Ask an admin to configure the broadcast message template first.'); return }
-        setUpdatingId(contact.id)
-        const phone = contact.mobile_number.replace(/\D/g, '')
-        window.open(`https://web.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(settings.message_template)}`, '_blank')
-        const sentAt = new Date().toISOString()
-        const { error } = await supabase.from('broadcast_contacts').update({ sent_at: sentAt, sent_by: userId }).eq('id', contact.id)
-        if (error) toast.error('WhatsApp opened, but the sent status could not be saved.')
-        else {
-            setContacts(previous => previous.map(item => item.id === contact.id ? { ...item, sent_at: sentAt, sent_by: userId } : item))
             toast.success('Message marked as sent')
-            await advanceSendState()
         }
         setUpdatingId(null)
     }
@@ -199,6 +200,34 @@ export default function BroadcastOutreachContactsPage() {
                     <button onClick={copyImage} disabled={!settings.image_url || copying} style={{ ...buttonStyle, background: settings.image_url ? '#0074BD' : '#CCC', cursor: settings.image_url ? 'pointer' : 'not-allowed' }}>{copying ? 'Copying…' : 'Copy Image'}</button>
                 </div>
                 {!settings.image_url && <p style={{ color: '#8A5A00', background: '#FFF7E6', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', margin: '0 0 16px' }}>No broadcast image is configured. Ask an admin to configure it in Settings.</p>}
+                <section style={progressCardStyle} aria-label="Broadcast progress">
+                    <div style={progressHeaderStyle}>
+                        <div>
+                            <p style={eyebrowStyle}>Campaign progress</p>
+                            <h2 style={progressTitleStyle}>Messages sent</h2>
+                        </div>
+                        <strong style={progressValueStyle}>{sentCount} <span style={progressTotalStyle}>/ {totalContacts}</span></strong>
+                    </div>
+                    <div style={progressTrackStyle} role="progressbar" aria-label="Messages sent" aria-valuemin={0} aria-valuemax={totalContacts} aria-valuenow={sentCount}>
+                        <div style={{ ...progressFillStyle, width: `${messageProgress}%` }} />
+                    </div>
+                    <div style={progressFooterStyle}><span>{messageProgress}% complete</span><span>{messagesRemaining} remaining</span></div>
+                    <div style={waveDividerStyle} />
+                    <div style={waveGridStyle}>
+                        <div>
+                            <div style={waveLabelRowStyle}><span style={waveLabelStyle}>Waves completed today</span><strong style={waveCountStyle}>{wavesToday} / {dailyLimit}</strong></div>
+                            <div style={smallTrackStyle} role="progressbar" aria-label="Waves completed today" aria-valuemin={0} aria-valuemax={dailyLimit} aria-valuenow={wavesToday}>
+                                <div style={{ ...smallFillStyle, width: `${waveProgress}%` }} />
+                            </div>
+                        </div>
+                        <div>
+                            <div style={waveLabelRowStyle}><span style={waveLabelStyle}>Current wave</span><strong style={waveCountStyle}>{activeWaveCount} / {activeWaveTarget} messages</strong></div>
+                            <div style={smallTrackStyle} role="progressbar" aria-label="Current wave messages sent" aria-valuemin={0} aria-valuemax={activeWaveTarget} aria-valuenow={activeWaveCount}>
+                                <div style={{ ...smallFillStyle, background: '#0074BD', width: `${activeWaveProgress}%` }} />
+                            </div>
+                        </div>
+                    </div>
+                </section>
                 {canSend && (dailyBlocked
                     ? <p style={{ color: '#9A3412', background: '#FFF7ED', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontWeight: 600, margin: '0 0 16px' }}>Daily wave limit reached ({wavesToday} / {dailyLimit} waves) — ask an admin to grant additional waves for today.</p>
                     : cooldownActive
@@ -218,6 +247,22 @@ export default function BroadcastOutreachContactsPage() {
 }
 
 const cardStyle: React.CSSProperties = { background: '#FFF', borderRadius: '16px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', overflow: 'hidden' }
+const progressCardStyle: React.CSSProperties = { background: 'linear-gradient(135deg, #162860 0%, #1E4D8E 100%)', color: '#FFF', borderRadius: '16px', boxShadow: '0 8px 20px rgba(22,40,96,0.16)', padding: '22px 24px', marginBottom: '16px' }
+const progressHeaderStyle: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px' }
+const eyebrowStyle: React.CSSProperties = { margin: 0, color: '#BFD7FF', fontSize: '11px', fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase' }
+const progressTitleStyle: React.CSSProperties = { margin: '4px 0 0', fontSize: '18px', fontWeight: 700 }
+const progressValueStyle: React.CSSProperties = { fontSize: '25px', lineHeight: 1, whiteSpace: 'nowrap' }
+const progressTotalStyle: React.CSSProperties = { color: '#BFD7FF', fontSize: '15px', fontWeight: 600 }
+const progressTrackStyle: React.CSSProperties = { height: '12px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(255,255,255,.22)', marginTop: '18px' }
+const progressFillStyle: React.CSSProperties = { height: '100%', borderRadius: 'inherit', background: '#60D6A5', transition: 'width 300ms ease' }
+const progressFooterStyle: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', gap: '12px', color: '#D6E5FF', fontSize: '12px', fontWeight: 600, marginTop: '8px' }
+const waveDividerStyle: React.CSSProperties = { height: '1px', background: 'rgba(255,255,255,.2)', margin: '19px 0 16px' }
+const waveGridStyle: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '18px' }
+const waveLabelRowStyle: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'baseline', marginBottom: '8px' }
+const waveLabelStyle: React.CSSProperties = { color: '#D6E5FF', fontSize: '12px', fontWeight: 600 }
+const waveCountStyle: React.CSSProperties = { color: '#FFF', fontSize: '13px' }
+const smallTrackStyle: React.CSSProperties = { height: '7px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(255,255,255,.22)' }
+const smallFillStyle: React.CSSProperties = { height: '100%', borderRadius: 'inherit', background: '#60D6A5', transition: 'width 300ms ease' }
 const fieldLabel: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: '5px', color: '#444', fontSize: '12px', fontWeight: 600 }
 const inputStyle: React.CSSProperties = { minWidth: '130px', padding: '8px 10px', border: '1px solid #DDD', borderRadius: '8px', fontSize: '13px', color: '#1A1A1A', background: '#FFF' }
 const buttonStyle: React.CSSProperties = { border: 'none', color: '#FFF', borderRadius: '8px', padding: '10px 16px', fontSize: '13px', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }

@@ -39,6 +39,16 @@ interface BroadcastSettings {
     daily_wave_target: number
 }
 
+interface ContactUploadPreview {
+    file: File
+    fileName: string
+    year: number
+    validCount: number
+    invalidCount: number
+    duplicateCount: number
+    sample: string[]
+}
+
 export default function AdminSettingsPage() {
     const router = useRouter()
     const supabase = createClient()
@@ -73,6 +83,8 @@ export default function AdminSettingsPage() {
     const [dailyWaveTarget, setDailyWaveTarget] = useState('20')
     const [uploadYear, setUploadYear] = useState(String(new Date().getFullYear()))
     const [uploading, setUploading] = useState(false)
+    const [contactUploadPreview, setContactUploadPreview] = useState<ContactUploadPreview | null>(null)
+    const [importingContacts, setImportingContacts] = useState(false)
     const [overrideWaves, setOverrideWaves] = useState('')
     const [grantingOverride, setGrantingOverride] = useState(false)
     const [currentOverride, setCurrentOverride] = useState<number | null>(null)
@@ -236,16 +248,38 @@ export default function AdminSettingsPage() {
             const formData = new FormData()
             formData.append('file', file)
             formData.append('year', String(year))
+            formData.append('mode', 'preview')
             const response = await fetch('/api/broadcast-outreach/upload', { method: 'POST', body: formData })
             const result = await response.json()
-            if (!response.ok) throw new Error(result.error ?? 'Unable to parse or upload the contact list.')
-            const { insertedCount, invalidCount } = result as { insertedCount: number; invalidCount: number }
-            if (insertedCount > 0) showToast(`${insertedCount} number${insertedCount === 1 ? '' : 's'} uploaded for year ${year}`)
-            if (invalidCount) showToast(`${invalidCount} invalid row${invalidCount === 1 ? '' : 's'} skipped.`, 'error')
+            if (!response.ok) throw new Error(result.error ?? 'Unable to parse the contact list.')
+            const { validCount, invalidCount, duplicateCount, sample } = result as Omit<ContactUploadPreview, 'file' | 'fileName' | 'year'>
+            setContactUploadPreview({ file, fileName: file.name, year, validCount, invalidCount, duplicateCount, sample })
         } catch (error) {
-            const message = error instanceof Error ? error.message : 'Unable to parse or upload the contact list.'
+            const message = error instanceof Error ? error.message : 'Unable to parse the contact list.'
             showToast(message, 'error')
         } finally { setUploading(false) }
+    }
+
+    async function approveContactImport() {
+        if (!contactUploadPreview) return
+        setImportingContacts(true)
+        try {
+            const formData = new FormData()
+            formData.append('file', contactUploadPreview.file)
+            formData.append('year', String(contactUploadPreview.year))
+            formData.append('mode', 'import')
+            const response = await fetch('/api/broadcast-outreach/upload', { method: 'POST', body: formData })
+            const result = await response.json()
+            if (!response.ok) throw new Error(result.error ?? 'Unable to import the contact list.')
+            const { insertedCount, invalidCount, duplicateCount } = result as { insertedCount: number; invalidCount: number; duplicateCount: number }
+            showToast(`${insertedCount} number${insertedCount === 1 ? '' : 's'} imported for year ${contactUploadPreview.year}`)
+            if (invalidCount) showToast(`${invalidCount} invalid row${invalidCount === 1 ? '' : 's'} skipped.`, 'error')
+            if (duplicateCount) showToast(`${duplicateCount} duplicate row${duplicateCount === 1 ? '' : 's'} skipped.`, 'error')
+            setContactUploadPreview(null)
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unable to import the contact list.'
+            showToast(message, 'error')
+        } finally { setImportingContacts(false) }
     }
 
     function handleBroadcastImageUpload(event: React.ChangeEvent<HTMLInputElement>) {
@@ -637,14 +671,26 @@ export default function AdminSettingsPage() {
                             {checkPermission(permissions, userRole || '', 'action:broadcast_contacts:upload', 'action') && (
                             <div>
                                 <label style={labelStyle}>Upload Contacts</label>
-                                <p style={{ fontSize: '12px', color: '#666', margin: '0 0 12px' }}>Upload a CSV or XLSX list of mobile numbers for a given year.</p>
+                                <p style={{ fontSize: '12px', color: '#666', margin: '0 0 12px' }}>Choose a CSV or XLSX list of mobile numbers for a given year, review the parsed data, then approve the import.</p>
                                 <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'end' }}>
                                     <div><label style={{ ...labelStyle, fontSize: '12px' }}>Year</label><input type="number" value={uploadYear} onChange={e => setUploadYear(e.target.value)} min="1900" max="3000" style={{ ...inputStyle, width: '160px' }} /></div>
-                                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '10px 20px', backgroundColor: uploading ? '#93C5E8' : '#0074BD', color: '#FFF', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: uploading ? 'not-allowed' : 'pointer' }}>
-                                        <span>{uploading ? 'Uploading…' : 'Upload Contacts (.csv, .xlsx)'}</span>
-                                        <input type="file" accept=".csv,.xlsx" style={{ display: 'none' }} onChange={handleContactUpload} disabled={uploading} />
+                                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '10px 20px', backgroundColor: uploading || importingContacts ? '#93C5E8' : '#0074BD', color: '#FFF', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: uploading || importingContacts ? 'not-allowed' : 'pointer' }}>
+                                        <span>{uploading ? 'Preparing preview…' : 'Choose Contacts (.csv, .xlsx)'}</span>
+                                        <input type="file" accept=".csv,.xlsx" style={{ display: 'none' }} onChange={handleContactUpload} disabled={uploading || importingContacts} />
                                     </label>
                                 </div>
+                                {contactUploadPreview && <div style={{ marginTop: '16px', border: '1px solid #BFDBFE', background: '#F8FBFF', borderRadius: '12px', overflow: 'hidden' }}>
+                                    <div style={{ padding: '14px 16px', borderBottom: '1px solid #DBEAFE', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                                        <div><p style={{ color: '#162860', fontSize: '14px', fontWeight: 700, margin: 0 }}>Review contact import</p><p style={{ color: '#5B6B86', fontSize: '12px', margin: '3px 0 0' }}>{contactUploadPreview.fileName} · Year {contactUploadPreview.year}</p></div>
+                                        <span style={{ color: '#166534', background: '#DCFCE7', borderRadius: '999px', padding: '5px 9px', fontSize: '12px', fontWeight: 700 }}>{contactUploadPreview.validCount} ready to import</span>
+                                    </div>
+                                    <div style={{ padding: '14px 16px' }}>
+                                        <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', color: '#44546F', fontSize: '12px', marginBottom: '12px' }}><span><strong style={{ color: '#1A1A1A' }}>{contactUploadPreview.validCount}</strong> valid numbers</span><span><strong style={{ color: contactUploadPreview.invalidCount ? '#B45309' : '#1A1A1A' }}>{contactUploadPreview.invalidCount}</strong> invalid rows</span><span><strong style={{ color: contactUploadPreview.duplicateCount ? '#B45309' : '#1A1A1A' }}>{contactUploadPreview.duplicateCount}</strong> duplicates skipped</span></div>
+                                        <p style={{ color: '#44546F', fontSize: '12px', fontWeight: 700, margin: '0 0 7px' }}>First {contactUploadPreview.sample.length} numbers</p>
+                                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>{contactUploadPreview.sample.map(number => <code key={number} style={{ background: '#EAF2FF', color: '#1E4D8E', borderRadius: '5px', padding: '4px 6px', fontSize: '11px' }}>{number}</code>)}</div>
+                                        <div style={{ display: 'flex', gap: '10px', marginTop: '16px', flexWrap: 'wrap' }}><button onClick={approveContactImport} disabled={importingContacts} style={{ padding: '9px 16px', background: importingContacts ? '#93C5E8' : '#0074BD', color: '#FFF', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: 600, cursor: importingContacts ? 'not-allowed' : 'pointer' }}>{importingContacts ? 'Importing…' : `Approve & Import ${contactUploadPreview.validCount} Contacts`}</button><button onClick={() => setContactUploadPreview(null)} disabled={importingContacts} style={{ padding: '9px 16px', background: '#FFF', color: '#44546F', border: '1px solid #CBD5E1', borderRadius: '8px', fontSize: '13px', fontWeight: 600, cursor: importingContacts ? 'not-allowed' : 'pointer' }}>Cancel</button></div>
+                                    </div>
+                                </div>}
                             </div>
                             )}
                             {checkPermission(permissions, userRole || '', 'action:broadcast_settings:manage_template', 'action') && (
