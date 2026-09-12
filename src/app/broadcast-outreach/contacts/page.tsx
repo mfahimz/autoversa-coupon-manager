@@ -113,6 +113,20 @@ export default function BroadcastOutreachContactsPage() {
         return () => clearInterval(interval)
     }, [])
 
+    useEffect(() => {
+        if (!userId) return
+        const refreshSendState = async () => {
+            const { data } = await supabase
+                .from('broadcast_send_state')
+                .select('current_wave_count, wave_target, cooldown_until, last_sent_at, waves_completed_today, daily_period_started_at, daily_override_extra')
+                .eq('id', 1)
+                .single()
+            if (data) setSendState(data as SendState)
+        }
+        const interval = setInterval(refreshSendState, 5000)
+        return () => clearInterval(interval)
+    }, [userId])
+
     const cooldownActive = !!sendState.cooldown_until && new Date(sendState.cooldown_until).getTime() > now
     const cooldownRemainingMs = cooldownActive ? new Date(sendState.cooldown_until!).getTime() - now : 0
 
