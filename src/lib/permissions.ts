@@ -72,6 +72,9 @@ export const PERMISSIONS_REGISTRY: PageDef[] = [
         label: 'Broadcast Outreach — Contacts',
         actions: [
             { resource: 'action:broadcast_contacts:send_message', label: 'Send WhatsApp broadcast message' },
+            { resource: 'action:broadcast_contacts:view_all_contacts', label: 'View full contact table & database (Disable for restricted senders)' },
+            { resource: 'action:broadcast_contacts:view_stats', label: 'View wave progress & analytics' },
+            { resource: 'action:broadcast_contacts:view_sent_history', label: 'View sent contact history & toggle sent contacts' },
             { resource: 'action:broadcast_contacts:filter_by_year', label: 'Filter contacts by year' },
             { resource: 'action:broadcast_contacts:upload', label: 'Upload contact list' },
         ],

@@ -12,7 +12,7 @@ import { toast } from 'sonner'
 
 const supabase = createClient()
 
-const PAGE_SIZE = 20
+const PAGE_SIZE_OPTIONS = [20, 50, 100, 250, 500, 1000, 2000]
 
 type BroadcastContact = { id: string; mobile_number: string; year: number; sent_at: string | null; sent_by: string | null; created_at: string }
 type BroadcastSettings = { message_template: string | null; image_url: string | null; wave_min: number; wave_max: number; cooldown_min_minutes: number; cooldown_max_minutes: number; daily_wave_target: number }
@@ -74,6 +74,7 @@ export default function BroadcastOutreachContactsPage() {
     const [yearFilter, setYearFilter] = useState('')
     const [showSent, setShowSent] = useState(false)
     const [page, setPage] = useState(1)
+    const [pageSize, setPageSize] = useState(20)
     const [updatingId, setUpdatingId] = useState<string | null>(null)
     const [copying, setCopying] = useState(false)
     const audioContextRef = useRef<AudioContext | null>(null)
@@ -89,7 +90,7 @@ export default function BroadcastOutreachContactsPage() {
             const loadedPermissions = await loadPermissionsForRole(profile.user_role)
             if (!checkPermission(loadedPermissions, profile.user_role, 'page:broadcast-outreach-contacts', 'view')) { router.push('/dashboard'); return }
             const [contactsResult, settingsResult, sendStateResult] = await Promise.all([
-                supabase.from('broadcast_contacts').select('id, mobile_number, year, sent_at, sent_by, created_at'),
+                supabase.from('broadcast_contacts').select('id, mobile_number, year, sent_at, sent_by, created_at').order('created_at', { ascending: true }).limit(2000),
                 supabase.from('broadcast_settings').select('message_template, image_url, wave_min, wave_max, cooldown_min_minutes, cooldown_max_minutes, daily_wave_target').eq('id', 1).single(),
                 supabase.from('broadcast_send_state').select('current_wave_count, wave_target, cooldown_until, last_sent_at, waves_completed_today, daily_period_started_at, daily_override_extra').eq('id', 1).single(),
             ])
@@ -143,20 +144,30 @@ export default function BroadcastOutreachContactsPage() {
     const waveProgress = dailyLimit ? Math.min(100, Math.round((wavesToday / dailyLimit) * 100)) : 0
 
     const canSend = checkPermission(permissions, userRole, 'action:broadcast_contacts:send_message', 'action')
+    const canViewAllContacts = checkPermission(permissions, userRole, 'action:broadcast_contacts:view_all_contacts', 'action')
+    const canViewStats = checkPermission(permissions, userRole, 'action:broadcast_contacts:view_stats', 'action')
+    const canViewSentHistory = checkPermission(permissions, userRole, 'action:broadcast_contacts:view_sent_history', 'action')
     const canFilterByYear = checkPermission(permissions, userRole, 'action:broadcast_contacts:filter_by_year', 'action')
+
+    const nextUnsentContact = useMemo(() => {
+        return contacts
+            .filter(c => !c.sent_at)
+            .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())[0] || null
+    }, [contacts])
+
     const years = useMemo(() => Array.from(new Set(contacts.map(contact => contact.year))).sort((a, b) => b - a), [contacts])
     const filtered = useMemo(() => contacts
         .filter(contact => !canFilterByYear || !yearFilter || String(contact.year) === yearFilter)
-        .filter(contact => showSent || !contact.sent_at)
+        .filter(contact => (canViewSentHistory && showSent) || !contact.sent_at)
         .sort((a, b) => {
             if (!!a.sent_at !== !!b.sent_at) return a.sent_at ? 1 : -1
             if (!a.sent_at) return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
             return new Date(b.sent_at!).getTime() - new Date(a.sent_at!).getTime()
-        }), [contacts, canFilterByYear, yearFilter, showSent])
-    const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
-    const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+        }), [contacts, canFilterByYear, yearFilter, canViewSentHistory, showSent])
+    const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
+    const paginated = filtered.slice((page - 1) * pageSize, page * pageSize)
 
-    useEffect(() => { setPage(1) }, [yearFilter, showSent])
+    useEffect(() => { setPage(1) }, [yearFilter, showSent, pageSize])
 
     function playCooldownCompleteSound() {
         try {
@@ -265,51 +276,255 @@ export default function BroadcastOutreachContactsPage() {
             <main style={{ padding: '0 32px 48px' }}>
                 <Breadcrumb items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Broadcast Outreach' }, { label: 'Contacts' }]} />
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap', marginBottom: '24px' }}>
-                    <div><h1 style={{ fontSize: '22px', fontWeight: 700, color: '#1A1A1A', margin: 0 }}>Broadcast Contacts</h1><p style={{ color: '#666', fontSize: '14px', marginTop: '6px' }}>Send the configured message to uploaded contact lists.</p></div>
+                    <div>
+                        <h1 style={{ fontSize: '22px', fontWeight: 700, color: '#1A1A1A', margin: 0 }}>Broadcast Contacts</h1>
+                        <p style={{ color: '#666', fontSize: '14px', marginTop: '6px' }}>
+                            {canViewAllContacts ? 'Send the configured message to uploaded contact lists and manage outreach.' : 'Send the configured WhatsApp broadcast message to assigned contacts.'}
+                        </p>
+                    </div>
                     <button onClick={copyImage} disabled={!settings.image_url || copying} style={{ ...buttonStyle, background: settings.image_url ? '#0074BD' : '#CCC', cursor: settings.image_url ? 'pointer' : 'not-allowed' }}>{copying ? 'Copying…' : 'Copy Image'}</button>
                 </div>
                 {!settings.image_url && <p style={{ color: '#8A5A00', background: '#FFF7E6', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', margin: '0 0 16px' }}>No broadcast image is configured. Ask an admin to configure it in Settings.</p>}
-                <section style={progressCardStyle} aria-label="Broadcast progress">
-                    <div style={progressHeaderStyle}>
-                        <div>
-                            <p style={eyebrowStyle}>{isWaveCooldown ? 'Next wave' : 'Current wave'}</p>
-                            <h2 style={progressTitleStyle}>{isWaveCooldown ? 'Ready after the break' : 'Messages sent'}</h2>
+
+                {/* Macro wave progress & stats card - only visible if user has view_stats permission */}
+                {canViewStats && (
+                    <section style={progressCardStyle} aria-label="Broadcast progress">
+                        <div style={progressHeaderStyle}>
+                            <div>
+                                <p style={eyebrowStyle}>{isWaveCooldown ? 'Next wave' : 'Current wave'}</p>
+                                <h2 style={progressTitleStyle}>{isWaveCooldown ? 'Ready after the break' : 'Messages sent'}</h2>
+                            </div>
+                            <strong style={progressValueStyle}>{activeWaveCount} <span style={progressTotalStyle}>/ {activeWaveTarget}</span></strong>
                         </div>
-                        <strong style={progressValueStyle}>{activeWaveCount} <span style={progressTotalStyle}>/ {activeWaveTarget}</span></strong>
-                    </div>
-                    <div style={progressTrackStyle} role="progressbar" aria-label="Messages sent in this wave" aria-valuemin={0} aria-valuemax={activeWaveTarget} aria-valuenow={activeWaveCount}>
-                        <div style={{ ...progressFillStyle, width: `${activeWaveProgress}%` }} />
-                    </div>
-                    <div style={progressFooterStyle}><span>{activeWaveProgress}% complete</span><span>{activeWaveTarget - activeWaveCount} messages left in this wave</span></div>
-                    <div style={waveDividerStyle} />
-                    <div style={waveGridStyle}>
-                        <div>
-                            <div style={waveLabelRowStyle}><span style={waveLabelStyle}>Waves completed today</span><strong style={waveCountStyle}>{wavesToday} / {dailyLimit}</strong></div>
-                            <div style={smallTrackStyle} role="progressbar" aria-label="Waves completed today" aria-valuemin={0} aria-valuemax={dailyLimit} aria-valuenow={wavesToday}>
-                                <div style={{ ...smallFillStyle, width: `${waveProgress}%` }} />
+                        <div style={progressTrackStyle} role="progressbar" aria-label="Messages sent in this wave" aria-valuemin={0} aria-valuemax={activeWaveTarget} aria-valuenow={activeWaveCount}>
+                            <div style={{ ...progressFillStyle, width: `${activeWaveProgress}%` }} />
+                        </div>
+                        <div style={progressFooterStyle}><span>{activeWaveProgress}% complete</span><span>{activeWaveTarget - activeWaveCount} messages left in this wave</span></div>
+                        <div style={waveDividerStyle} />
+                        <div style={waveGridStyle}>
+                            <div>
+                                <div style={waveLabelRowStyle}><span style={waveLabelStyle}>Waves completed today</span><strong style={waveCountStyle}>{wavesToday} / {dailyLimit}</strong></div>
+                                <div style={smallTrackStyle} role="progressbar" aria-label="Waves completed today" aria-valuemin={0} aria-valuemax={dailyLimit} aria-valuenow={wavesToday}>
+                                    <div style={{ ...smallFillStyle, width: `${waveProgress}%` }} />
+                                </div>
+                            </div>
+                            <div>
+                                <span style={waveLabelStyle}>{isWaveCooldown ? 'Next wave starts in' : isMessageCooldown ? 'Next message in' : 'Wave status'}</span>
+                                <p style={nextWaveTimeStyle}>{cooldownActive ? formatCountdown(cooldownRemainingMs) : 'Sending is available now'}</p>
+                                {isWaveCooldown && <span style={nextWaveHintStyle}>The next wave will contain {activeWaveTarget} messages.</span>}
+                                {isMessageCooldown && <span style={nextWaveHintStyle}>Randomized delay (60–90s) between messages to protect delivery.</span>}
                             </div>
                         </div>
-                        <div>
-                            <span style={waveLabelStyle}>{isWaveCooldown ? 'Next wave starts in' : isMessageCooldown ? 'Next message in' : 'Wave status'}</span>
-                            <p style={nextWaveTimeStyle}>{cooldownActive ? formatCountdown(cooldownRemainingMs) : 'Sending is available now'}</p>
-                            {isWaveCooldown && <span style={nextWaveHintStyle}>The next wave will contain {activeWaveTarget} messages.</span>}
-                            {isMessageCooldown && <span style={nextWaveHintStyle}>Randomized delay (60–90s) between messages to protect delivery.</span>}
-                        </div>
-                    </div>
-                </section>
+                    </section>
+                )}
+
+                {/* Status banner */}
                 {canSend && (dailyBlocked
                     ? <p style={{ color: '#9A3412', background: '#FFF7ED', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontWeight: 600, margin: '0 0 16px' }}>Daily wave limit reached ({wavesToday} / {dailyLimit} waves) — ask an admin to grant additional waves for today.</p>
                     : cooldownActive
-                    ? <p style={{ color: '#9A3412', background: '#FFF7ED', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontWeight: 600, margin: '0 0 16px' }}>{isWaveCooldown ? `Sending paused — next wave resumes in ${formatCountdown(cooldownRemainingMs)}` : `Wave cooldown — next message in ${formatCountdown(cooldownRemainingMs)} · Current wave: ${activeWaveCount} / ${activeWaveTarget} sent`} · Waves today: {wavesToday} / {dailyLimit}</p>
-                    : <p style={{ color: '#1E3A8A', background: '#EFF6FF', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontWeight: 600, margin: '0 0 16px' }}>Wave: {sendState.current_wave_count} / {sendState.wave_target || settings.wave_min} messages sent · Waves today: {wavesToday} / {dailyLimit}</p>
+                    ? <p style={{ color: '#9A3412', background: '#FFF7ED', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontWeight: 600, margin: '0 0 16px' }}>{isWaveCooldown ? `Sending paused — next wave resumes in ${formatCountdown(cooldownRemainingMs)}` : `Wave cooldown — next message in ${formatCountdown(cooldownRemainingMs)} · Current wave: ${activeWaveCount} / ${activeWaveTarget} sent`} {canViewStats ? `· Waves today: ${wavesToday} / ${dailyLimit}` : ''}</p>
+                    : <p style={{ color: '#1E3A8A', background: '#EFF6FF', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontWeight: 600, margin: '0 0 16px' }}>Wave status: {sendState.current_wave_count} / {sendState.wave_target || settings.wave_min} messages sent {canViewStats ? `· Waves today: ${wavesToday} / ${dailyLimit}` : ''}</p>
                 )}
-                <section style={cardStyle}>
-                    <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'end', padding: '20px 24px', borderBottom: '1px solid #F0F0F0' }}>
-                        {canFilterByYear && <label style={fieldLabel}>Year<select value={yearFilter} onChange={event => setYearFilter(event.target.value)} style={inputStyle}><option value="">All years</option>{years.map(year => <option key={year} value={year}>{year}</option>)}</select></label>}
-                        <label style={{ display: 'flex', gap: '8px', alignItems: 'center', color: '#444', fontSize: '13px', paddingBottom: '9px' }}><input type="checkbox" checked={showSent} onChange={event => setShowSent(event.target.checked)} /> Show sent contacts</label>
-                    </div>
-                    {loading ? <div style={{ padding: '28px 24px', color: '#666' }}>Loading contacts…</div> : filtered.length === 0 ? <div style={{ padding: '28px 24px', color: '#666' }}>No contacts match the current view.</div> : <><div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '760px' }}><thead><tr style={{ background: '#162860', color: '#FFF', fontSize: '12px', textTransform: 'uppercase' }}><th style={headerCell}>Mobile Number</th><th style={headerCell}>Year</th><th style={headerCell}>Status</th><th style={headerCell}>Sent Date</th><th style={headerCell}>Action</th></tr></thead><tbody>{paginated.map(contact => <tr key={contact.id} style={{ background: '#FFF', borderBottom: '1px solid #F5F5F5' }}><td style={cell}><span title={contact.mobile_number}>{maskMobileNumber(contact.mobile_number)}</span>{/* This masks the visual UI only; it is not a security boundary. */}</td><td style={cell}>{contact.year}</td><td style={cell}><span style={{ fontSize: '12px', fontWeight: 600, borderRadius: '100px', padding: '4px 9px', color: contact.sent_at ? '#166534' : '#9A3412', background: contact.sent_at ? '#DCFCE7' : '#FFF7ED' }}>{contact.sent_at ? 'Sent' : 'Not Sent'}</span></td><td style={cell}>{contact.sent_at ? <span title={new Date(contact.sent_at).toLocaleString('en-GB')}>{relativeDate(contact.sent_at)}</span> : '—'}</td><td style={cell}>{canSend ? <button onClick={() => sendMessage(contact)} disabled={!!contact.sent_at || updatingId === contact.id || cooldownActive || dailyBlocked} style={{ ...smallButtonStyle, opacity: contact.sent_at || updatingId === contact.id || cooldownActive || dailyBlocked ? .5 : 1, cursor: contact.sent_at || cooldownActive || dailyBlocked ? 'not-allowed' : 'pointer' }}>{updatingId === contact.id ? 'Sending…' : contact.sent_at ? 'Sent' : dailyBlocked ? 'Limit Reached' : cooldownActive ? 'Paused' : 'Send Message'}</button> : '—'}</td></tr>)}</tbody></table></div>{totalPages > 1 && <div style={{ padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><span style={{ color: '#666', fontSize: '13px' }}>Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length}</span><div style={{ display: 'flex', gap: '8px' }}><button onClick={() => setPage(value => Math.max(1, value - 1))} disabled={page === 1} style={smallButtonStyle}>Previous</button><button onClick={() => setPage(value => Math.min(totalPages, value + 1))} disabled={page === totalPages} style={smallButtonStyle}>Next</button></div></div>}</>}
-                </section>
+
+                {/* VIEW 1: Focused Sender Mode (When user does NOT have permission to view full dataset/table) */}
+                {!canViewAllContacts ? (
+                    <section style={cardStyle}>
+                        <div style={{ padding: '24px 28px', borderBottom: '1px solid #F0F0F0' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                                <div>
+                                    <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#162860', margin: 0 }}>Message Dispatch Queue</h2>
+                                    <p style={{ color: '#666', fontSize: '13px', margin: '4px 0 0' }}>Sender Workspace — dispatch assigned WhatsApp messages one at a time.</p>
+                                </div>
+                                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                    <span style={{ fontSize: '12px', fontWeight: 600, borderRadius: '999px', padding: '5px 12px', background: cooldownActive ? '#FFF7ED' : dailyBlocked ? '#FEE2E2' : '#DCFCE7', color: cooldownActive ? '#9A3412' : dailyBlocked ? '#991B1B' : '#166534' }}>
+                                        {dailyBlocked ? 'Daily Limit Reached' : cooldownActive ? (isWaveCooldown ? 'Wave Break' : 'Message Cooldown') : 'Ready to Send'}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style={{ padding: '32px 28px' }}>
+                            {loading ? (
+                                <div style={{ textAlign: 'center', padding: '32px 0', color: '#666' }}>Loading dispatch queue…</div>
+                            ) : !nextUnsentContact ? (
+                                <div style={{ textAlign: 'center', padding: '40px 20px', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #CBD5E1' }}>
+                                    <div style={{ fontSize: '36px', marginBottom: '12px' }}>🎉</div>
+                                    <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#1E293B', margin: '0 0 6px' }}>All Contacts Dispatched</h3>
+                                    <p style={{ color: '#64748B', fontSize: '14px', margin: 0, maxWidth: '420px', marginLeft: 'auto', marginRight: 'auto' }}>
+                                        There are no pending contacts remaining in the broadcast queue. Great job!
+                                    </p>
+                                </div>
+                            ) : (
+                                <div style={{ maxWidth: '640px', margin: '0 auto', background: '#F8FBFF', borderRadius: '14px', border: '1px solid #BFDBFE', padding: '24px' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '18px' }}>
+                                        <div>
+                                            <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#1E4D8E', background: '#DBEAFE', padding: '3px 8px', borderRadius: '6px' }}>
+                                                Next Recipient in Queue
+                                            </span>
+                                            <div style={{ fontSize: '20px', fontWeight: 700, color: '#0F172A', marginTop: '10px' }}>
+                                                {maskMobileNumber(nextUnsentContact.mobile_number)}
+                                            </div>
+                                            {canFilterByYear && (
+                                                <div style={{ fontSize: '13px', color: '#64748B', marginTop: '4px' }}>
+                                                    Year: <strong style={{ color: '#334155' }}>{nextUnsentContact.year}</strong>
+                                                </div>
+                                            )}
+                                        </div>
+                                        <span style={{ fontSize: '12px', fontWeight: 600, padding: '4px 10px', borderRadius: '999px', background: '#FFF7ED', color: '#9A3412' }}>
+                                            Pending
+                                        </span>
+                                    </div>
+
+                                    <div style={{ background: '#FFF', borderRadius: '10px', padding: '16px', border: '1px solid #E2E8F0', marginBottom: '20px' }}>
+                                        <p style={{ fontSize: '12px', fontWeight: 600, color: '#475569', margin: '0 0 6px' }}>Workflow Instructions:</p>
+                                        <ol style={{ fontSize: '12px', color: '#64748B', margin: 0, paddingLeft: '18px', lineHeight: 1.6 }}>
+                                            <li>Click <strong>Copy Image</strong> above if your broadcast includes promotional graphics.</li>
+                                            <li>Click <strong>Send Next WhatsApp Message</strong> below to launch WhatsApp Web.</li>
+                                            <li>Paste the image in WhatsApp chat & click send. The queue will automatically refresh.</li>
+                                        </ol>
+                                    </div>
+
+                                    {canSend ? (
+                                        <button
+                                            onClick={() => sendMessage(nextUnsentContact)}
+                                            disabled={updatingId === nextUnsentContact.id || cooldownActive || dailyBlocked}
+                                            style={{
+                                                width: '100%',
+                                                padding: '14px 20px',
+                                                fontSize: '15px',
+                                                fontWeight: 700,
+                                                color: '#FFF',
+                                                background: cooldownActive || dailyBlocked ? '#94A3B8' : '#25D366',
+                                                border: 'none',
+                                                borderRadius: '10px',
+                                                cursor: cooldownActive || dailyBlocked ? 'not-allowed' : 'pointer',
+                                                boxShadow: cooldownActive || dailyBlocked ? 'none' : '0 4px 12px rgba(37, 211, 102, 0.28)',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                gap: '10px',
+                                                transition: 'all 0.2s ease',
+                                            }}
+                                        >
+                                            {updatingId === nextUnsentContact.id ? 'Opening WhatsApp & Recording…' : dailyBlocked ? 'Daily Wave Limit Reached' : cooldownActive ? `Cooldown Active (${formatCountdown(cooldownRemainingMs)})` : 'Send Next WhatsApp Message →'}
+                                        </button>
+                                    ) : (
+                                        <p style={{ textAlign: 'center', color: '#64748B', fontSize: '13px', margin: 0 }}>
+                                            You do not have permission to dispatch messages. Contact an admin.
+                                        </p>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </section>
+                ) : (
+                    /* VIEW 2: Full Dataset Table Mode (For Admins / Managers / Roles with full dataset view permission) */
+                    <section style={cardStyle}>
+                        <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', padding: '20px 24px', borderBottom: '1px solid #F0F0F0' }}>
+                            <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
+                                {canFilterByYear && (
+                                    <label style={fieldLabel}>
+                                        Year
+                                        <select value={yearFilter} onChange={event => setYearFilter(event.target.value)} style={inputStyle}>
+                                            <option value="">All years</option>
+                                            {years.map(year => <option key={year} value={year}>{year}</option>)}
+                                        </select>
+                                    </label>
+                                )}
+                                {canViewSentHistory && (
+                                    <label style={{ display: 'flex', gap: '8px', alignItems: 'center', color: '#444', fontSize: '13px', paddingTop: canFilterByYear ? '18px' : '0' }}>
+                                        <input type="checkbox" checked={showSent} onChange={event => setShowSent(event.target.checked)} />
+                                        Show sent contacts
+                                    </label>
+                                )}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <label style={{ fontSize: '12px', color: '#666', fontWeight: 600 }}>
+                                    Rows per page:
+                                    <select
+                                        value={pageSize}
+                                        onChange={e => setPageSize(Number(e.target.value))}
+                                        style={{ ...inputStyle, minWidth: '80px', marginLeft: '6px', padding: '5px 8px' }}
+                                    >
+                                        {PAGE_SIZE_OPTIONS.map(size => (
+                                            <option key={size} value={size}>
+                                                {size === 2000 ? '2,000 (All)' : size}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
+                            </div>
+                        </div>
+                        {loading ? (
+                            <div style={{ padding: '28px 24px', color: '#666' }}>Loading contacts…</div>
+                        ) : filtered.length === 0 ? (
+                            <div style={{ padding: '28px 24px', color: '#666' }}>No contacts match the current view.</div>
+                        ) : (
+                            <>
+                                <div style={{ overflowX: 'auto' }}>
+                                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '760px' }}>
+                                        <thead>
+                                            <tr style={{ background: '#162860', color: '#FFF', fontSize: '12px', textTransform: 'uppercase' }}>
+                                                <th style={headerCell}>#</th>
+                                                <th style={headerCell}>Mobile Number</th>
+                                                <th style={headerCell}>Year</th>
+                                                <th style={headerCell}>Status</th>
+                                                <th style={headerCell}>Sent Date</th>
+                                                <th style={headerCell}>Action</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {paginated.map((contact, idx) => (
+                                                <tr key={contact.id} style={{ background: '#FFF', borderBottom: '1px solid #F5F5F5' }}>
+                                                    <td style={{ ...cell, color: '#888', fontSize: '12px' }}>
+                                                        {(page - 1) * pageSize + idx + 1}
+                                                    </td>
+                                                    <td style={cell}>
+                                                        <span title={contact.mobile_number}>{maskMobileNumber(contact.mobile_number)}</span>
+                                                    </td>
+                                                    <td style={cell}>{contact.year}</td>
+                                                    <td style={cell}>
+                                                        <span style={{ fontSize: '12px', fontWeight: 600, borderRadius: '100px', padding: '4px 9px', color: contact.sent_at ? '#166534' : '#9A3412', background: contact.sent_at ? '#DCFCE7' : '#FFF7ED' }}>
+                                                            {contact.sent_at ? 'Sent' : 'Not Sent'}
+                                                        </span>
+                                                    </td>
+                                                    <td style={cell}>
+                                                        {contact.sent_at ? <span title={new Date(contact.sent_at).toLocaleString('en-GB')}>{relativeDate(contact.sent_at)}</span> : '—'}
+                                                    </td>
+                                                    <td style={cell}>
+                                                        {canSend ? (
+                                                            <button
+                                                                onClick={() => sendMessage(contact)}
+                                                                disabled={!!contact.sent_at || updatingId === contact.id || cooldownActive || dailyBlocked}
+                                                                style={{ ...smallButtonStyle, opacity: contact.sent_at || updatingId === contact.id || cooldownActive || dailyBlocked ? .5 : 1, cursor: contact.sent_at || cooldownActive || dailyBlocked ? 'not-allowed' : 'pointer' }}
+                                                            >
+                                                                {updatingId === contact.id ? 'Sending…' : contact.sent_at ? 'Sent' : dailyBlocked ? 'Limit Reached' : cooldownActive ? 'Paused' : 'Send Message'}
+                                                            </button>
+                                                        ) : '—'}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div style={{ padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', background: '#FAFAFA', borderTop: '1px solid #F0F0F0' }}>
+                                    <span style={{ color: '#666', fontSize: '13px' }}>
+                                        Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, filtered.length)} of {filtered.length.toLocaleString()} contacts
+                                    </span>
+                                    {totalPages > 1 && (
+                                        <div style={{ display: 'flex', gap: '8px' }}>
+                                            <button onClick={() => setPage(value => Math.max(1, value - 1))} disabled={page === 1} style={{ ...smallButtonStyle, opacity: page === 1 ? 0.5 : 1 }}>Previous</button>
+                                            <span style={{ display: 'flex', alignItems: 'center', fontSize: '13px', color: '#555', padding: '0 4px' }}>
+                                                Page {page} of {totalPages}
+                                            </span>
+                                            <button onClick={() => setPage(value => Math.min(totalPages, value + 1))} disabled={page === totalPages} style={{ ...smallButtonStyle, opacity: page === totalPages ? 0.5 : 1 }}>Next</button>
+                                        </div>
+                                    )}
+                                </div>
+                            </>
+                        )}
+                    </section>
+                )}
             </main>
         </div>
     )
