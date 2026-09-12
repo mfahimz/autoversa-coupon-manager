@@ -157,6 +157,16 @@ export default function BroadcastOutreachContactsPage() {
             .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())[0] || null
     }, [contacts])
 
+    const myStats = useMemo(() => {
+        if (!userId) return { today: 0, total: 0 }
+        const todayStart = new Date()
+        todayStart.setHours(0, 0, 0, 0)
+        const todayStartMs = todayStart.getTime()
+        const mySent = contacts.filter(c => c.sent_by === userId && c.sent_at)
+        const today = mySent.filter(c => new Date(c.sent_at!).getTime() >= todayStartMs).length
+        return { today, total: mySent.length }
+    }, [contacts, userId])
+
     const years = useMemo(() => Array.from(new Set(contacts.map(contact => contact.year))).sort((a, b) => b - a), [contacts])
     const filtered = useMemo(() => contacts
         .filter(contact => !canFilterByYear || !yearFilter || String(contact.year) === yearFilter)
@@ -393,7 +403,10 @@ export default function BroadcastOutreachContactsPage() {
                                     <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#162860', margin: 0 }}>Message Dispatch Queue</h2>
                                     <p style={{ color: '#666', fontSize: '13px', margin: '4px 0 0' }}>Sender Workspace — dispatch assigned WhatsApp messages one at a time.</p>
                                 </div>
-                                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                                    <span style={{ fontSize: '12px', fontWeight: 600, borderRadius: '999px', padding: '5px 12px', background: '#F0FDF4', color: '#166534', border: '1px solid #BBF7D0' }}>
+                                        You sent: <strong>{myStats.today}</strong> today · <strong>{myStats.total}</strong> total
+                                    </span>
                                     <span style={{ fontSize: '12px', fontWeight: 600, borderRadius: '999px', padding: '5px 12px', background: cooldownActive ? '#FFF7ED' : dailyBlocked ? '#FEE2E2' : '#DCFCE7', color: cooldownActive ? '#9A3412' : dailyBlocked ? '#991B1B' : '#166534' }}>
                                         {dailyBlocked ? 'Daily Limit Reached' : cooldownActive ? 'Please Wait' : 'Ready to Send'}
                                     </span>

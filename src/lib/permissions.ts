@@ -67,6 +67,7 @@ export const PERMISSIONS_REGISTRY: PageDef[] = [
         label: 'Broadcast Outreach — Overview',
         actions: [
             { resource: 'action:broadcast_overview:view_all_stats', label: 'View total contact volume & dataset stats' },
+            { resource: 'action:broadcast_overview:view_sender_breakdown', label: 'View sender & operator performance breakdown table' },
             { resource: 'action:broadcast_overview:view_year_breakdown', label: 'View year-by-year dataset breakdown' },
             { resource: 'action:broadcast_overview:view_wave_logs', label: 'View wave performance logs & operator activity' },
         ],

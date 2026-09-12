@@ -17,6 +17,7 @@ type BroadcastContact = {
     id: string
     year: number
     sent_at: string | null
+    sent_by: string | null
 }
 
 type Stats = {
@@ -24,6 +25,23 @@ type Stats = {
     totalSent: number
     sentToday: number
     sentThisMonth: number
+}
+
+type MyStats = {
+    today: number
+    thisMonth: number
+    total: number
+}
+
+type SenderStat = {
+    userId: string
+    name: string
+    role: string
+    email: string
+    sentToday: number
+    sentThisMonth: number
+    totalSent: number
+    lastSentAt: string | null
 }
 
 type WaveLog = {
@@ -63,9 +81,12 @@ function StatCard({ label, value, color, loading }: { label: string; value: numb
 export default function BroadcastOutreachOverviewPage() {
     const router = useRouter()
     const [loading, setLoading] = useState(true)
+    const [currentUserId, setCurrentUserId] = useState('')
     const [userRole, setUserRole] = useState('')
     const [permissions, setPermissions] = useState<PermissionsMap>({})
     const [stats, setStats] = useState<Stats>({ total: 0, totalSent: 0, sentToday: 0, sentThisMonth: 0 })
+    const [myStats, setMyStats] = useState<MyStats>({ today: 0, thisMonth: 0, total: 0 })
+    const [senderStats, setSenderStats] = useState<SenderStat[]>([])
     const [byYear, setByYear] = useState<{ year: number; total: number; sent: number }[]>([])
     const [waveLogs, setWaveLogs] = useState<WaveLog[]>([])
 
@@ -78,27 +99,72 @@ export default function BroadcastOutreachOverviewPage() {
             const loadedPermissions = await loadPermissionsForRole(profile.user_role)
             if (!checkPermission(loadedPermissions, profile.user_role, 'page:broadcast-outreach-overview', 'view')) { router.push('/dashboard'); return }
 
+            setCurrentUserId(user.id)
             setUserRole(profile.user_role)
             setPermissions(loadedPermissions)
 
-            const [batch1, batch2, waveLogsResult] = await Promise.all([
-                supabase.from('broadcast_contacts').select('id, year, sent_at').range(0, 999),
-                supabase.from('broadcast_contacts').select('id, year, sent_at').range(1000, 1999),
+            const [batch1, batch2, waveLogsResult, profilesResult] = await Promise.all([
+                supabase.from('broadcast_contacts').select('id, year, sent_at, sent_by').range(0, 999),
+                supabase.from('broadcast_contacts').select('id, year, sent_at, sent_by').range(1000, 1999),
                 supabase.from('broadcast_wave_logs').select('id, daily_period_started_at, daily_wave_number, message_target, messages_sent, started_at, completed_at, duration_seconds, cooldown_until, cooldown_minutes, completed_by_name').order('completed_at', { ascending: false }),
+                supabase.from('profiles').select('id, full_name, email, user_role'),
             ])
+
             if (!batch1.error && !batch2.error) {
                 const contacts = [...(batch1.data ?? []), ...(batch2.data ?? [])] as BroadcastContact[]
                 const now = new Date()
-                // This mirrors the dashboard's browser-local calendar convention.
                 const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
                 const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
                 const sent = contacts.filter(contact => contact.sent_at)
+
+                // 1. Overall stats
                 setStats({
                     total: contacts.length,
                     totalSent: sent.length,
                     sentToday: sent.filter(contact => new Date(contact.sent_at!).getTime() >= todayStart).length,
                     sentThisMonth: sent.filter(contact => new Date(contact.sent_at!).getTime() >= monthStart).length,
                 })
+
+                // 2. Personal stats for logged-in user
+                const mySent = sent.filter(c => c.sent_by === user.id)
+                setMyStats({
+                    today: mySent.filter(c => new Date(c.sent_at!).getTime() >= todayStart).length,
+                    thisMonth: mySent.filter(c => new Date(c.sent_at!).getTime() >= monthStart).length,
+                    total: mySent.length,
+                })
+
+                // 3. Sender breakdown
+                const profilesMap = new Map((profilesResult.data ?? []).map(p => [p.id, p]))
+                const sendersMap = new Map<string, { today: number; month: number; total: number; lastSent: string | null }>()
+
+                sent.forEach(c => {
+                    const senderId = c.sent_by || 'unknown'
+                    const cur = sendersMap.get(senderId) ?? { today: 0, month: 0, total: 0, lastSent: null }
+                    cur.total += 1
+                    const sentMs = new Date(c.sent_at!).getTime()
+                    if (sentMs >= todayStart) cur.today += 1
+                    if (sentMs >= monthStart) cur.month += 1
+                    if (!cur.lastSent || sentMs > new Date(cur.lastSent).getTime()) cur.lastSent = c.sent_at
+                    sendersMap.set(senderId, cur)
+                })
+
+                const breakdownList: SenderStat[] = Array.from(sendersMap.entries()).map(([senderId, data]) => {
+                    const prof = profilesMap.get(senderId)
+                    return {
+                        userId: senderId,
+                        name: prof?.full_name || (senderId === user.id ? 'You' : 'Unknown Operator'),
+                        role: prof?.user_role || 'STAFF',
+                        email: prof?.email || '—',
+                        sentToday: data.today,
+                        sentThisMonth: data.month,
+                        totalSent: data.total,
+                        lastSentAt: data.lastSent,
+                    }
+                }).sort((a, b) => b.totalSent - a.totalSent)
+
+                setSenderStats(breakdownList)
+
+                // 4. Year Breakdown
                 const grouped = new Map<number, { total: number; sent: number }>()
                 contacts.forEach(contact => {
                     const current = grouped.get(contact.year) ?? { total: 0, sent: 0 }
@@ -111,6 +177,7 @@ export default function BroadcastOutreachOverviewPage() {
                 console.error('Failed to load contacts:', batch1.error || batch2.error)
                 toast.error('Failed to load broadcast contacts')
             }
+
             if (!waveLogsResult.error) {
                 setWaveLogs((waveLogsResult.data ?? []) as WaveLog[])
             } else {
@@ -123,6 +190,7 @@ export default function BroadcastOutreachOverviewPage() {
     }, [router])
 
     const canViewAllStats = checkPermission(permissions, userRole, 'action:broadcast_overview:view_all_stats', 'action') || checkPermission(permissions, userRole, 'action:broadcast_contacts:view_stats', 'action')
+    const canViewSenderBreakdown = checkPermission(permissions, userRole, 'action:broadcast_overview:view_sender_breakdown', 'action') || checkPermission(permissions, userRole, 'action:broadcast_contacts:view_stats', 'action')
     const canViewYearBreakdown = checkPermission(permissions, userRole, 'action:broadcast_overview:view_year_breakdown', 'action') || checkPermission(permissions, userRole, 'action:broadcast_contacts:view_all_contacts', 'action')
     const canViewWaveLogs = checkPermission(permissions, userRole, 'action:broadcast_overview:view_wave_logs', 'action') || checkPermission(permissions, userRole, 'action:broadcast_contacts:view_stats', 'action')
 
@@ -135,7 +203,9 @@ export default function BroadcastOutreachOverviewPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px', marginBottom: '28px' }}>
                     <div>
                         <h1 style={{ fontSize: '22px', fontWeight: 700, color: '#1A1A1A', margin: 0 }}>Broadcast Outreach</h1>
-                        <p style={{ color: '#666', fontSize: '14px', marginTop: '6px' }}>Contact-list and WhatsApp outreach summary.</p>
+                        <p style={{ color: '#666', fontSize: '14px', marginTop: '6px' }}>
+                            {canViewAllStats ? 'Contact-list and WhatsApp outreach performance summary.' : 'Your personal WhatsApp dispatch performance summary.'}
+                        </p>
                     </div>
                     <Link
                         href="/broadcast-outreach/contacts"
@@ -145,14 +215,69 @@ export default function BroadcastOutreachOverviewPage() {
                     </Link>
                 </div>
 
-                {/* Metrics Cards — Conceal total dataset size & total remaining count if user lacks permission */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '16px', marginBottom: '28px' }}>
-                    {canViewAllStats && <StatCard label="Total Contacts" value={stats.total} color="#0074BD" loading={loading} />}
-                    {canViewAllStats && <StatCard label="Total Sent" value={stats.totalSent} color="#16A34A" loading={loading} />}
-                    <StatCard label="Sent Today" value={stats.sentToday} color="#7C3AED" loading={loading} />
-                    <StatCard label="Sent This Month" value={stats.sentThisMonth} color="#D97706" loading={loading} />
-                    {canViewAllStats && <StatCard label="Remaining / Unsent" value={stats.total - stats.totalSent} color="#D0021B" loading={loading} />}
-                </div>
+                {/* Metrics Cards: Company Macro Stats for Admin/Manager OR Personal Dispatch Stats for Senders */}
+                {canViewAllStats ? (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '16px', marginBottom: '28px' }}>
+                        <StatCard label="Total Contacts" value={stats.total} color="#0074BD" loading={loading} />
+                        <StatCard label="Total Sent (All)" value={stats.totalSent} color="#16A34A" loading={loading} />
+                        <StatCard label="Sent Today (All)" value={stats.sentToday} color="#7C3AED" loading={loading} />
+                        <StatCard label="Sent This Month" value={stats.sentThisMonth} color="#D97706" loading={loading} />
+                        <StatCard label="Remaining / Unsent" value={stats.total - stats.totalSent} color="#D0021B" loading={loading} />
+                    </div>
+                ) : (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '28px' }}>
+                        <StatCard label="My Messages Sent Today" value={myStats.today} color="#16A34A" loading={loading} />
+                        <StatCard label="My Messages This Month" value={myStats.thisMonth} color="#0074BD" loading={loading} />
+                        <StatCard label="My Total All-Time Dispatches" value={myStats.total} color="#7C3AED" loading={loading} />
+                    </div>
+                )}
+
+                {/* Sender Performance Breakdown Table — for Admins / Managers */}
+                {canViewSenderBreakdown && (
+                    <section style={{ background: '#FFF', borderRadius: '16px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', overflow: 'hidden', marginBottom: '24px' }}>
+                        <div style={{ padding: '20px 24px', borderBottom: '1px solid #F0F0F0' }}>
+                            <h2 style={{ fontSize: '16px', fontWeight: 700, color: '#1A1A1A', margin: 0 }}>Sender & Operator Performance</h2>
+                            <p style={{ fontSize: '13px', color: '#666', margin: '5px 0 0' }}>Dispatches completed per team member.</p>
+                        </div>
+                        {loading ? <div style={{ padding: '28px 24px', color: '#666', fontSize: '14px' }}>Loading sender metrics…</div> : senderStats.length === 0 ? <div style={{ padding: '28px 24px', color: '#666', fontSize: '14px' }}>No messages sent yet.</div> : (
+                            <div style={{ overflowX: 'auto' }}>
+                                <table style={{ width: '100%', minWidth: '700px', borderCollapse: 'collapse', textAlign: 'left' }}>
+                                    <thead>
+                                        <tr style={{ background: '#162860', color: '#FFF', fontSize: '12px', textTransform: 'uppercase' }}>
+                                            <th style={headerCell}>Sender / Operator</th>
+                                            <th style={headerCell}>Role</th>
+                                            <th style={headerCell}>Sent Today</th>
+                                            <th style={headerCell}>Sent This Month</th>
+                                            <th style={headerCell}>Total Dispatched</th>
+                                            <th style={headerCell}>Last Active</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {senderStats.map(s => (
+                                            <tr key={s.userId} style={{ borderBottom: '1px solid #F5F5F5' }}>
+                                                <td style={cell}>
+                                                    <div style={{ fontWeight: 600, color: s.userId === currentUserId ? '#0074BD' : '#1A1A1A' }}>
+                                                        {s.name} {s.userId === currentUserId && <span style={{ fontSize: '11px', background: '#E0F2FE', color: '#0369A1', padding: '2px 6px', borderRadius: '4px', marginLeft: '6px' }}>You</span>}
+                                                    </div>
+                                                    <div style={{ fontSize: '12px', color: '#888' }}>{s.email}</div>
+                                                </td>
+                                                <td style={cell}>
+                                                    <span style={{ fontSize: '11px', fontWeight: 700, background: '#F1F5F9', color: '#475569', padding: '3px 8px', borderRadius: '6px' }}>
+                                                        {s.role}
+                                                    </span>
+                                                </td>
+                                                <td style={cell}><strong>{s.sentToday.toLocaleString()}</strong></td>
+                                                <td style={cell}>{s.sentThisMonth.toLocaleString()}</td>
+                                                <td style={cell}><strong style={{ color: '#16A34A' }}>{s.totalSent.toLocaleString()}</strong></td>
+                                                <td style={cell}>{s.lastSentAt ? formatDateTime(s.lastSentAt) : '—'}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </section>
+                )}
 
                 {/* Year Breakdown Table — only visible if user has permission */}
                 {canViewYearBreakdown && (
@@ -225,13 +350,21 @@ export default function BroadcastOutreachOverviewPage() {
                     </section>
                 )}
 
-                {/* Notice for least-privileged sender users */}
-                {!canViewAllStats && !canViewYearBreakdown && !canViewWaveLogs && (
-                    <div style={{ marginTop: '24px', background: '#F8FAFC', border: '1px dashed #CBD5E1', borderRadius: '12px', padding: '28px', textAlign: 'center' }}>
-                        <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#334155', margin: '0 0 6px' }}>Sender View Active</h3>
-                        <p style={{ fontSize: '13px', color: '#64748B', margin: 0, maxWidth: '460px', marginLeft: 'auto', marginRight: 'auto' }}>
-                            Full database volume, year breakdown, and wave logs are restricted for your role. You can dispatch assigned WhatsApp messages from the Contacts tab.
-                        </p>
+                {/* Personal Sender Activity Notice */}
+                {!canViewAllStats && (
+                    <div style={{ marginTop: '24px', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '12px', padding: '22px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+                        <div>
+                            <h3 style={{ fontSize: '14px', fontWeight: 700, color: '#1E293B', margin: '0 0 4px' }}>Personal Performance Tracked</h3>
+                            <p style={{ fontSize: '13px', color: '#64748B', margin: 0 }}>
+                                Every message you dispatch is automatically logged under your profile. Keep up the great work!
+                            </p>
+                        </div>
+                        <Link
+                            href="/broadcast-outreach/contacts"
+                            style={{ padding: '8px 16px', background: '#162860', color: '#FFF', borderRadius: '8px', fontSize: '12px', fontWeight: 600, textDecoration: 'none' }}
+                        >
+                            Open Sender Queue →
+                        </Link>
                     </div>
                 )}
             </main>
