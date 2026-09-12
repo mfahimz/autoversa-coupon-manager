@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/layout/Navbar'
 import Breadcrumb from '@/components/layout/Breadcrumb'
 import { checkPermission, loadPermissionsForRole } from '@/lib/permissions'
+import { toast } from 'sonner'
 
 const supabase = createClient()
 
@@ -99,8 +100,16 @@ export default function BroadcastOutreachOverviewPage() {
                     grouped.set(contact.year, current)
                 })
                 setByYear(Array.from(grouped.entries()).map(([year, value]) => ({ year, ...value })).sort((a, b) => b.year - a.year))
+            } else {
+                console.error('Failed to load contacts:', contactsResult.error)
+                toast.error('Failed to load broadcast contacts')
             }
-            if (!waveLogsResult.error) setWaveLogs((waveLogsResult.data ?? []) as WaveLog[])
+            if (!waveLogsResult.error) {
+                setWaveLogs((waveLogsResult.data ?? []) as WaveLog[])
+            } else {
+                console.error('Failed to load wave logs:', waveLogsResult.error)
+                toast.error('Failed to load wave history')
+            }
             setLoading(false)
         }
         init()
