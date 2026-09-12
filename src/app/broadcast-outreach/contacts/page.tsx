@@ -243,15 +243,15 @@ export default function BroadcastOutreachContactsPage() {
                 <section style={progressCardStyle} aria-label="Broadcast progress">
                     <div style={progressHeaderStyle}>
                         <div>
-                            <p style={eyebrowStyle}>{cooldownActive ? 'Next randomized wave' : 'Active randomized wave'}</p>
-                            <h2 style={progressTitleStyle}>{cooldownActive ? 'Wave is queued' : 'Messages in this wave'}</h2>
+                            <p style={eyebrowStyle}>{cooldownActive ? 'Next wave' : 'Current wave'}</p>
+                            <h2 style={progressTitleStyle}>{cooldownActive ? 'Ready after the break' : 'Messages sent'}</h2>
                         </div>
                         <strong style={progressValueStyle}>{activeWaveCount} <span style={progressTotalStyle}>/ {activeWaveTarget}</span></strong>
                     </div>
                     <div style={progressTrackStyle} role="progressbar" aria-label="Messages sent in this wave" aria-valuemin={0} aria-valuemax={activeWaveTarget} aria-valuenow={activeWaveCount}>
                         <div style={{ ...progressFillStyle, width: `${activeWaveProgress}%` }} />
                     </div>
-                    <div style={progressFooterStyle}><span>{activeWaveProgress}% of this wave complete</span><span>Randomized target: {settings.wave_min}–{settings.wave_max} messages</span></div>
+                    <div style={progressFooterStyle}><span>{activeWaveProgress}% complete</span><span>{activeWaveTarget - activeWaveCount} messages left in this wave</span></div>
                     <div style={waveDividerStyle} />
                     <div style={waveGridStyle}>
                         <div>
@@ -263,7 +263,7 @@ export default function BroadcastOutreachContactsPage() {
                         <div>
                             <span style={waveLabelStyle}>{cooldownActive ? 'Next wave starts in' : 'Wave status'}</span>
                             <p style={nextWaveTimeStyle}>{cooldownActive ? formatCountdown(cooldownRemainingMs) : 'Sending is available now'}</p>
-                            {cooldownActive && <span style={nextWaveHintStyle}>The queued wave has {activeWaveTarget} assigned messages.</span>}
+                            {cooldownActive && <span style={nextWaveHintStyle}>The next wave will contain {activeWaveTarget} messages.</span>}
                         </div>
                     </div>
                 </section>
