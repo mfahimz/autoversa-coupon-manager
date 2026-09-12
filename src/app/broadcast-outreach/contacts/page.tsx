@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Navbar from '@/components/layout/Navbar'
@@ -76,6 +76,10 @@ export default function BroadcastOutreachContactsPage() {
     const [page, setPage] = useState(1)
     const [updatingId, setUpdatingId] = useState<string | null>(null)
     const [copying, setCopying] = useState(false)
+    const [cooldownAlertsEnabled, setCooldownAlertsEnabled] = useState(false)
+    const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | 'unsupported'>('unsupported')
+    const audioContextRef = useRef<AudioContext | null>(null)
+    const previousCooldownActiveRef = useRef<boolean | null>(null)
 
     useEffect(() => {
         async function init() {
@@ -111,6 +115,10 @@ export default function BroadcastOutreachContactsPage() {
         return () => clearInterval(interval)
     }, [])
 
+    useEffect(() => {
+        if ('Notification' in window) setNotificationPermission(Notification.permission)
+    }, [])
+
     const cooldownActive = !!sendState.cooldown_until && new Date(sendState.cooldown_until).getTime() > now
     const cooldownRemainingMs = cooldownActive ? new Date(sendState.cooldown_until!).getTime() - now : 0
 
@@ -139,6 +147,55 @@ export default function BroadcastOutreachContactsPage() {
     const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
     useEffect(() => { setPage(1) }, [yearFilter, showSent])
+
+    function playCooldownCompleteSound() {
+        try {
+            const context = audioContextRef.current ?? new AudioContext()
+            audioContextRef.current = context
+            const start = context.currentTime
+            ;[0, 0.3, 0.6].forEach((offset, index) => {
+                const oscillator = context.createOscillator()
+                const gain = context.createGain()
+                oscillator.frequency.value = index === 2 ? 1046.5 : 880
+                gain.gain.setValueAtTime(0.0001, start + offset)
+                gain.gain.exponentialRampToValueAtTime(0.16, start + offset + 0.02)
+                gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + 0.22)
+                oscillator.connect(gain).connect(context.destination)
+                oscillator.start(start + offset)
+                oscillator.stop(start + offset + 0.24)
+            })
+        } catch (error) { console.error('Cooldown alert sound failed', error) }
+    }
+
+    useEffect(() => {
+        const wasCoolingDown = previousCooldownActiveRef.current
+        if (wasCoolingDown && !cooldownActive && cooldownAlertsEnabled) {
+            playCooldownCompleteSound()
+            if (notificationPermission === 'granted') {
+                new Notification('Broadcast wave is ready', { body: `Your next randomized wave of ${activeWaveTarget} messages can now be sent.`, tag: 'broadcast-cooldown-complete' })
+            }
+            toast.success(`Cooldown finished — the next wave of ${activeWaveTarget} messages is ready.`)
+        }
+        previousCooldownActiveRef.current = cooldownActive
+    }, [cooldownActive, cooldownAlertsEnabled, notificationPermission, activeWaveTarget])
+
+    async function enableCooldownAlerts() {
+        try {
+            const context = audioContextRef.current ?? new AudioContext()
+            audioContextRef.current = context
+            await context.resume()
+            let permission: NotificationPermission | 'unsupported' = 'unsupported'
+            if ('Notification' in window) {
+                permission = Notification.permission === 'default' ? await Notification.requestPermission() : Notification.permission
+                setNotificationPermission(permission)
+            }
+            setCooldownAlertsEnabled(true)
+            toast.success(permission === 'granted' ? 'Sound and browser alerts are enabled.' : 'Sound alert is enabled. Allow browser notifications to receive alerts while this tab is in the background.')
+        } catch (error) {
+            console.error('Could not enable cooldown alerts', error)
+            toast.error('Your browser blocked the cooldown alert. Enable sound or notification permissions and try again.')
+        }
+    }
 
     async function copyImage() {
         if (!settings.image_url) return
@@ -220,6 +277,7 @@ export default function BroadcastOutreachContactsPage() {
                             <span style={waveLabelStyle}>{cooldownActive ? 'Next wave starts in' : 'Wave status'}</span>
                             <p style={nextWaveTimeStyle}>{cooldownActive ? formatCountdown(cooldownRemainingMs) : 'Sending is available now'}</p>
                             {cooldownActive && <span style={nextWaveHintStyle}>The queued wave has {activeWaveTarget} assigned messages.</span>}
+                            <button onClick={enableCooldownAlerts} style={alertButtonStyle}>{cooldownAlertsEnabled ? notificationPermission === 'granted' ? 'Sound + browser alerts enabled' : 'Sound alert enabled' : 'Enable cooldown alerts'}</button>
                         </div>
                     </div>
                 </section>
@@ -260,6 +318,7 @@ const smallTrackStyle: React.CSSProperties = { height: '7px', borderRadius: '999
 const smallFillStyle: React.CSSProperties = { height: '100%', borderRadius: 'inherit', background: '#60D6A5', transition: 'width 300ms ease' }
 const nextWaveTimeStyle: React.CSSProperties = { color: '#FFF', fontSize: '22px', fontWeight: 700, margin: '5px 0 0', lineHeight: 1.1 }
 const nextWaveHintStyle: React.CSSProperties = { color: '#D6E5FF', fontSize: '11px', display: 'block', marginTop: '5px' }
+const alertButtonStyle: React.CSSProperties = { marginTop: '11px', padding: '7px 10px', color: '#FFF', background: 'rgba(255,255,255,.14)', border: '1px solid rgba(255,255,255,.38)', borderRadius: '7px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }
 const fieldLabel: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: '5px', color: '#444', fontSize: '12px', fontWeight: 600 }
 const inputStyle: React.CSSProperties = { minWidth: '130px', padding: '8px 10px', border: '1px solid #DDD', borderRadius: '8px', fontSize: '13px', color: '#1A1A1A', background: '#FFF' }
 const buttonStyle: React.CSSProperties = { border: 'none', color: '#FFF', borderRadius: '8px', padding: '10px 16px', fontSize: '13px', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }
