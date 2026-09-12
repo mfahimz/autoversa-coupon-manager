@@ -89,13 +89,15 @@ export default function BroadcastOutreachContactsPage() {
             if (profile.is_active === false) { await supabase.auth.signOut(); router.push('/login'); return }
             const loadedPermissions = await loadPermissionsForRole(profile.user_role)
             if (!checkPermission(loadedPermissions, profile.user_role, 'page:broadcast-outreach-contacts', 'view')) { router.push('/dashboard'); return }
-            const [contactsResult, settingsResult, sendStateResult] = await Promise.all([
-                supabase.from('broadcast_contacts').select('id, mobile_number, year, sent_at, sent_by, created_at').order('created_at', { ascending: true }).limit(2000),
+            const [batch1, batch2, settingsResult, sendStateResult] = await Promise.all([
+                supabase.from('broadcast_contacts').select('id, mobile_number, year, sent_at, sent_by, created_at').order('created_at', { ascending: true }).range(0, 999),
+                supabase.from('broadcast_contacts').select('id, mobile_number, year, sent_at, sent_by, created_at').order('created_at', { ascending: true }).range(1000, 1999),
                 supabase.from('broadcast_settings').select('message_template, image_url, wave_min, wave_max, cooldown_min_minutes, cooldown_max_minutes, daily_wave_target').eq('id', 1).single(),
                 supabase.from('broadcast_send_state').select('current_wave_count, wave_target, cooldown_until, last_sent_at, waves_completed_today, daily_period_started_at, daily_override_extra').eq('id', 1).single(),
             ])
-            if (contactsResult.error) toast.error('Failed to load broadcast contacts')
-            setContacts((contactsResult.data ?? []) as BroadcastContact[])
+            if (batch1.error || batch2.error) toast.error('Failed to load broadcast contacts')
+            const allContacts = [...(batch1.data ?? []), ...(batch2.data ?? [])] as BroadcastContact[]
+            setContacts(allContacts)
             setSettings((settingsResult.data ?? { message_template: null, image_url: null, wave_min: 5, wave_max: 8, cooldown_min_minutes: 5, cooldown_max_minutes: 15, daily_wave_target: 20 }) as BroadcastSettings)
             if (sendStateResult.error && !sendStateResult.data) {
                 await supabase.from('broadcast_send_state').upsert({ id: 1, ...DEFAULT_SEND_STATE })

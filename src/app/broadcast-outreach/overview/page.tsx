@@ -75,12 +75,13 @@ export default function BroadcastOutreachOverviewPage() {
             const permissions = await loadPermissionsForRole(profile.user_role)
             if (!checkPermission(permissions, profile.user_role, 'page:broadcast-outreach-overview', 'view')) { router.push('/dashboard'); return }
 
-            const [contactsResult, waveLogsResult] = await Promise.all([
-                supabase.from('broadcast_contacts').select('id, year, sent_at').limit(2000),
+            const [batch1, batch2, waveLogsResult] = await Promise.all([
+                supabase.from('broadcast_contacts').select('id, year, sent_at').range(0, 999),
+                supabase.from('broadcast_contacts').select('id, year, sent_at').range(1000, 1999),
                 supabase.from('broadcast_wave_logs').select('id, daily_period_started_at, daily_wave_number, message_target, messages_sent, started_at, completed_at, duration_seconds, cooldown_until, cooldown_minutes, completed_by_name').order('completed_at', { ascending: false }),
             ])
-            if (!contactsResult.error) {
-                const contacts = (contactsResult.data ?? []) as BroadcastContact[]
+            if (!batch1.error && !batch2.error) {
+                const contacts = [...(batch1.data ?? []), ...(batch2.data ?? [])] as BroadcastContact[]
                 const now = new Date()
                 // This mirrors the dashboard's browser-local calendar convention.
                 const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
@@ -101,7 +102,7 @@ export default function BroadcastOutreachOverviewPage() {
                 })
                 setByYear(Array.from(grouped.entries()).map(([year, value]) => ({ year, ...value })).sort((a, b) => b.year - a.year))
             } else {
-                console.error('Failed to load contacts:', contactsResult.error)
+                console.error('Failed to load contacts:', batch1.error || batch2.error)
                 toast.error('Failed to load broadcast contacts')
             }
             if (!waveLogsResult.error) {
