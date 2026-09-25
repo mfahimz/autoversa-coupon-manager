@@ -14,11 +14,44 @@ const supabase = createClient()
 
 const PAGE_SIZE_OPTIONS = [20, 50, 100, 250, 500, 1000, 2000]
 
-type BroadcastContact = { id: string; mobile_number: string; year: number; sent_at: string | null; sent_by: string | null; created_at: string }
+type BroadcastContact = { id: string; mobile_number: string; year: number; sent_at: string | null; sent_by: string | null; created_at: string; delivery_status: string }
 type BroadcastSettings = { message_template: string | null; image_url: string | null; wave_min: number; wave_max: number; cooldown_min_minutes: number; cooldown_max_minutes: number; daily_wave_target: number }
 type SendState = { current_wave_count: number; wave_target: number; cooldown_until: string | null; last_sent_at: string | null; waves_completed_today: number; daily_period_started_at: string | null; daily_override_extra: number }
+type ThrottleStatus = {
+    adaptive_enabled: boolean; health_score: number; health_tier: string; consecutive_failures: number
+    last_health_event: string | null; warmup_started_at: string | null; warmup_day: number
+    factor: number; health_factor: number; warmup_factor: number; history_factor: number
+    recent_neg_rate: number | null; recent_outcomes: number; history_wave_cap: number | null; avg_waves_per_day: number | null
+    eff_wave_min: number; eff_wave_max: number; eff_cooldown_min_minutes: number; eff_cooldown_max_minutes: number
+    eff_daily_wave_target: number; intra_delay_min_seconds: number; intra_delay_max_seconds: number
+}
 
 const DEFAULT_SEND_STATE: SendState = { current_wave_count: 0, wave_target: 0, cooldown_until: null, last_sent_at: null, waves_completed_today: 0, daily_period_started_at: null, daily_override_extra: 0 }
+
+const OUTCOME_OPTIONS: { value: string; label: string }[] = [
+    { value: 'sent', label: 'Awaiting result' },
+    { value: 'delivered', label: 'Delivered' },
+    { value: 'replied', label: 'Replied' },
+    { value: 'failed', label: 'Not delivered' },
+    { value: 'opted_out', label: 'Opted out / blocked' },
+]
+
+const STATUS_CHIP: Record<string, { label: string; color: string; background: string }> = {
+    pending: { label: 'Not Sent', color: '#9A3412', background: '#FFF7ED' },
+    sent: { label: 'Sent · awaiting result', color: '#92400E', background: '#FEF3C7' },
+    delivered: { label: 'Delivered', color: '#166534', background: '#DCFCE7' },
+    replied: { label: 'Replied', color: '#065F46', background: '#D1FAE5' },
+    failed: { label: 'Not delivered', color: '#991B1B', background: '#FEE2E2' },
+    opted_out: { label: 'Opted out', color: '#6B21A8', background: '#F3E8FF' },
+}
+
+const TIER_STYLE: Record<string, { label: string; color: string; background: string }> = {
+    excellent: { label: 'Excellent', color: '#065F46', background: '#D1FAE5' },
+    good: { label: 'Good', color: '#166534', background: '#DCFCE7' },
+    guarded: { label: 'Guarded', color: '#92400E', background: '#FEF3C7' },
+    risky: { label: 'Risky', color: '#9A3412', background: '#FFEDD5' },
+    critical: { label: 'Critical', color: '#991B1B', background: '#FEE2E2' },
+}
 
 function maskMobileNumber(number: string) {
     const lastFour = number.replace(/\D/g, '').slice(-4)
@@ -61,6 +94,11 @@ function formatCountdown(ms: number) {
     return `${minutes}m ${seconds}s`
 }
 
+// Daily wave counters reset at midnight UAE time (UTC+4, no DST).
+function uaeDayKey(ms: number) {
+    return new Date(ms + 4 * 60 * 60 * 1000).toISOString().slice(0, 10)
+}
+
 export default function BroadcastOutreachContactsPage() {
     const router = useRouter()
     const [loading, setLoading] = useState(true)
@@ -77,6 +115,10 @@ export default function BroadcastOutreachContactsPage() {
     const [pageSize, setPageSize] = useState(20)
     const [updatingId, setUpdatingId] = useState<string | null>(null)
     const [copying, setCopying] = useState(false)
+    const [throttle, setThrottle] = useState<ThrottleStatus | null>(null)
+    const [reportingId, setReportingId] = useState<string | null>(null)
+    const [reportingWarning, setReportingWarning] = useState(false)
+    const [dismissedOutcomeIds, setDismissedOutcomeIds] = useState<Set<string>>(() => new Set())
     const audioContextRef = useRef<AudioContext | null>(null)
     const previousCooldownActiveRef = useRef<boolean | null>(null)
 
@@ -89,11 +131,12 @@ export default function BroadcastOutreachContactsPage() {
             if (profile.is_active === false) { await supabase.auth.signOut(); router.push('/login'); return }
             const loadedPermissions = await loadPermissionsForRole(profile.user_role)
             if (!checkPermission(loadedPermissions, profile.user_role, 'page:broadcast-outreach-contacts', 'view')) { router.push('/dashboard'); return }
-            const [batch1, batch2, settingsResult, sendStateResult] = await Promise.all([
-                supabase.from('broadcast_contacts').select('id, mobile_number, year, sent_at, sent_by, created_at').order('created_at', { ascending: true }).range(0, 999),
-                supabase.from('broadcast_contacts').select('id, mobile_number, year, sent_at, sent_by, created_at').order('created_at', { ascending: true }).range(1000, 1999),
+            const [batch1, batch2, settingsResult, sendStateResult, throttleResult] = await Promise.all([
+                supabase.from('broadcast_contacts').select('id, mobile_number, year, sent_at, sent_by, created_at, delivery_status').order('created_at', { ascending: true }).range(0, 999),
+                supabase.from('broadcast_contacts').select('id, mobile_number, year, sent_at, sent_by, created_at, delivery_status').order('created_at', { ascending: true }).range(1000, 1999),
                 supabase.from('broadcast_settings').select('message_template, image_url, wave_min, wave_max, cooldown_min_minutes, cooldown_max_minutes, daily_wave_target').eq('id', 1).single(),
                 supabase.from('broadcast_send_state').select('current_wave_count, wave_target, cooldown_until, last_sent_at, waves_completed_today, daily_period_started_at, daily_override_extra').eq('id', 1).single(),
+                supabase.rpc('get_broadcast_throttle_status'),
             ])
             if (batch1.error || batch2.error) toast.error('Failed to load broadcast contacts')
             const allContacts = [...(batch1.data ?? []), ...(batch2.data ?? [])] as BroadcastContact[]
@@ -103,6 +146,7 @@ export default function BroadcastOutreachContactsPage() {
                 await supabase.from('broadcast_send_state').upsert({ id: 1, ...DEFAULT_SEND_STATE })
             }
             setSendState((sendStateResult.data ?? DEFAULT_SEND_STATE) as SendState)
+            if (throttleResult.data?.[0]) setThrottle(throttleResult.data[0] as ThrottleStatus)
             setUserRole(profile.user_role)
             setUserId(user.id)
             setPermissions(loadedPermissions)
@@ -119,12 +163,16 @@ export default function BroadcastOutreachContactsPage() {
     useEffect(() => {
         if (!userId) return
         const refreshSendState = async () => {
-            const { data } = await supabase
-                .from('broadcast_send_state')
-                .select('current_wave_count, wave_target, cooldown_until, last_sent_at, waves_completed_today, daily_period_started_at, daily_override_extra')
-                .eq('id', 1)
-                .single()
+            const [{ data }, throttleResult] = await Promise.all([
+                supabase
+                    .from('broadcast_send_state')
+                    .select('current_wave_count, wave_target, cooldown_until, last_sent_at, waves_completed_today, daily_period_started_at, daily_override_extra')
+                    .eq('id', 1)
+                    .single(),
+                supabase.rpc('get_broadcast_throttle_status'),
+            ])
             if (data) setSendState(data as SendState)
+            if (throttleResult.data?.[0]) setThrottle(throttleResult.data[0] as ThrottleStatus)
         }
         const interval = setInterval(refreshSendState, 5000)
         return () => clearInterval(interval)
@@ -135,12 +183,12 @@ export default function BroadcastOutreachContactsPage() {
     const isWaveCooldown = cooldownActive && sendState.current_wave_count === 0
     const isMessageCooldown = cooldownActive && sendState.current_wave_count > 0
 
-    const dailyPeriodExpired = !sendState.daily_period_started_at || now - new Date(sendState.daily_period_started_at).getTime() >= 24 * 60 * 60 * 1000
+    const dailyPeriodExpired = !sendState.daily_period_started_at || uaeDayKey(now) !== uaeDayKey(new Date(sendState.daily_period_started_at).getTime())
     const wavesToday = dailyPeriodExpired ? 0 : sendState.waves_completed_today
     const dailyOverride = dailyPeriodExpired ? 0 : sendState.daily_override_extra
-    const dailyLimit = settings.daily_wave_target + dailyOverride
+    const dailyLimit = (throttle?.eff_daily_wave_target ?? settings.daily_wave_target) + dailyOverride
     const dailyBlocked = !dailyPeriodExpired && wavesToday >= dailyLimit
-    const activeWaveTarget = sendState.wave_target || settings.wave_min
+    const activeWaveTarget = sendState.wave_target || throttle?.eff_wave_min || settings.wave_min
     const activeWaveCount = Math.min(sendState.current_wave_count, activeWaveTarget)
     const activeWaveProgress = activeWaveTarget ? Math.round((activeWaveCount / activeWaveTarget) * 100) : 0
     const waveProgress = dailyLimit ? Math.min(100, Math.round((wavesToday / dailyLimit) * 100)) : 0
@@ -156,6 +204,12 @@ export default function BroadcastOutreachContactsPage() {
             .filter(c => !c.sent_at)
             .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())[0] || null
     }, [contacts])
+
+    const awaitingOutcome = useMemo(() => {
+        return contacts
+            .filter(c => c.delivery_status === 'sent' && c.sent_by === userId && !dismissedOutcomeIds.has(c.id))
+            .sort((a, b) => new Date(b.sent_at ?? 0).getTime() - new Date(a.sent_at ?? 0).getTime())
+    }, [contacts, userId, dismissedOutcomeIds])
 
     const myStats = useMemo(() => {
         if (!userId) return { today: 0, total: 0 }
@@ -320,7 +374,7 @@ export default function BroadcastOutreachContactsPage() {
         if (error || !result) toast.error(error?.message ?? 'WhatsApp opened, but the sent status could not be saved.')
         else {
             const sentAt = result.sent_at ?? new Date().toISOString()
-            setContacts(previous => previous.map(item => item.id === contact.id ? { ...item, sent_at: sentAt, sent_by: userId } : item))
+            setContacts(previous => previous.map(item => item.id === contact.id ? { ...item, sent_at: sentAt, sent_by: userId, delivery_status: 'sent' } : item))
             setSendState(previous => ({
                 ...previous,
                 current_wave_count: result.current_wave_count,
@@ -330,9 +384,54 @@ export default function BroadcastOutreachContactsPage() {
                 daily_period_started_at: result.daily_period_started_at,
                 daily_override_extra: result.daily_override_extra,
             }))
+            setThrottle(previous => previous ? {
+                ...previous,
+                health_score: result.health_score ?? previous.health_score,
+                health_tier: result.health_tier ?? previous.health_tier,
+                eff_daily_wave_target: result.eff_daily_wave_target ?? previous.eff_daily_wave_target,
+            } : previous)
             toast.success('Message marked as sent')
         }
         setUpdatingId(null)
+    }
+
+    async function reportOutcome(contact: BroadcastContact, status: string) {
+        if (!canSend || !userId || contact.delivery_status === status) return
+        setReportingId(contact.id)
+        const { data, error } = await supabase.rpc('report_broadcast_contact_status', { p_contact_id: contact.id, p_status: status })
+        const result = data?.[0]
+        if (error || !result) {
+            toast.error(error?.message ?? 'Could not save the message outcome.')
+        } else {
+            setContacts(previous => previous.map(item => item.id === contact.id ? { ...item, delivery_status: result.delivery_status } : item))
+            setThrottle(previous => previous ? {
+                ...previous,
+                health_score: result.health_score,
+                health_tier: result.health_tier,
+                consecutive_failures: result.consecutive_failures,
+            } : previous)
+            if (result.cooldown_until) setSendState(previous => ({ ...previous, cooldown_until: result.cooldown_until }))
+            const chip = STATUS_CHIP[result.delivery_status]
+            toast.success(`Outcome saved: ${chip?.label ?? result.delivery_status}`)
+        }
+        setReportingId(null)
+    }
+
+    async function reportAccountWarning() {
+        if (!canSend) return
+        const confirmed = window.confirm('Report that WhatsApp showed a warning or temporarily restricted this account? Sending will pause for 24 hours and resume at reduced volume.')
+        if (!confirmed) return
+        setReportingWarning(true)
+        const { data, error } = await supabase.rpc('report_broadcast_account_warning')
+        const result = data?.[0]
+        if (error || !result) {
+            toast.error(error?.message ?? 'Could not record the account warning.')
+        } else {
+            setThrottle(previous => previous ? { ...previous, health_score: result.health_score, health_tier: result.health_tier } : previous)
+            if (result.cooldown_until) setSendState(previous => ({ ...previous, cooldown_until: result.cooldown_until }))
+            toast.success('Account warning recorded. Sending is paused for 24 hours.')
+        }
+        setReportingWarning(false)
     }
 
     return (
@@ -350,6 +449,9 @@ export default function BroadcastOutreachContactsPage() {
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                         {userRole === 'ADMIN' && (
                             <button onClick={playCooldownCompleteSound} style={{ ...buttonStyle, background: '#F0F4F8', color: '#162860', border: '1px solid #CBD5E1', cursor: 'pointer' }}>🔔 Test Alert Sound</button>
+                        )}
+                        {canSend && (
+                            <button onClick={reportAccountWarning} disabled={reportingWarning} style={{ ...buttonStyle, background: '#FFF1F2', color: '#9F1239', border: '1px solid #FECDD3', cursor: reportingWarning ? 'not-allowed' : 'pointer' }}>{reportingWarning ? 'Recording…' : '⚠ WhatsApp Warned Me'}</button>
                         )}
                         <button onClick={copyImage} disabled={!settings.image_url || copying} style={{ ...buttonStyle, background: settings.image_url ? '#0074BD' : '#CCC', cursor: settings.image_url ? 'pointer' : 'not-allowed' }}>{copying ? 'Copying…' : 'Copy Image'}</button>
                     </div>
@@ -383,6 +485,38 @@ export default function BroadcastOutreachContactsPage() {
                                 <p style={nextWaveTimeStyle}>{cooldownActive ? formatCountdown(cooldownRemainingMs) : 'Ready to send'}</p>
                             </div>
                         </div>
+                        {throttle && (
+                            <>
+                                <div style={waveDividerStyle} />
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                                        <span style={waveLabelStyle}>Account health</span>
+                                        <span style={{
+                                            fontSize: '12px', fontWeight: 700, borderRadius: '999px', padding: '4px 10px',
+                                            color: (TIER_STYLE[throttle.health_tier] ?? TIER_STYLE.good).color,
+                                            background: (TIER_STYLE[throttle.health_tier] ?? TIER_STYLE.good).background,
+                                        }}>
+                                            {Math.round(throttle.health_score)} / 100 · {(TIER_STYLE[throttle.health_tier] ?? TIER_STYLE.good).label}
+                                        </span>
+                                        {!throttle.adaptive_enabled && <span style={{ fontSize: '11px', fontWeight: 700, borderRadius: '999px', padding: '4px 10px', color: '#92400E', background: '#FEF3C7' }}>Adaptive throttle off</span>}
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                        {throttle.adaptive_enabled && throttle.warmup_factor < 1 && (
+                                            <span style={healthChipStyle}>Warm-up day {throttle.warmup_day + 1} · {Math.round(throttle.warmup_factor * 100)}% volume</span>
+                                        )}
+                                        {throttle.recent_neg_rate !== null && (
+                                            <span style={healthChipStyle}>Recent failure rate {Math.round(throttle.recent_neg_rate * 100)}% ({throttle.recent_outcomes} outcomes)</span>
+                                        )}
+                                        {throttle.consecutive_failures > 0 && (
+                                            <span style={healthChipStyle}>{throttle.consecutive_failures} failed in a row</span>
+                                        )}
+                                    </div>
+                                </div>
+                                <p style={{ color: '#D6E5FF', fontSize: '12px', fontWeight: 600, margin: '10px 0 0' }}>
+                                    Auto plan: waves of {throttle.eff_wave_min}–{throttle.eff_wave_max} messages · {throttle.eff_cooldown_min_minutes}–{throttle.eff_cooldown_max_minutes} min breaks · up to {throttle.eff_daily_wave_target} waves/day · {throttle.intra_delay_min_seconds}–{throttle.intra_delay_max_seconds}s between messages
+                                </p>
+                            </>
+                        )}
                     </section>
                 )}
 
@@ -415,6 +549,38 @@ export default function BroadcastOutreachContactsPage() {
                         </div>
 
                         <div style={{ padding: '32px 28px' }}>
+                            {!loading && canSend && awaitingOutcome.length > 0 && (
+                                <div style={{ maxWidth: '640px', margin: '0 auto 20px', background: '#FFFBEB', borderRadius: '14px', border: '1px solid #FDE68A', padding: '18px 20px' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                                        <div>
+                                            <p style={{ fontSize: '13px', fontWeight: 700, color: '#92400E', margin: 0 }}>How did the last message go?</p>
+                                            <p style={{ fontSize: '12px', color: '#A16207', margin: '3px 0 0' }}>
+                                                {maskMobileNumber(awaitingOutcome[0].mobile_number)} · sent {awaitingOutcome[0].sent_at ? relativeDate(awaitingOutcome[0].sent_at) : 'recently'}
+                                                {awaitingOutcome.length > 1 ? ` · ${awaitingOutcome.length - 1} more awaiting` : ''}
+                                            </p>
+                                        </div>
+                                        <button onClick={() => setDismissedOutcomeIds(previous => new Set(previous).add(awaitingOutcome[0].id))} style={{ background: 'none', border: 'none', color: '#A16207', fontSize: '12px', fontWeight: 600, cursor: 'pointer', textDecoration: 'underline' }}>Skip</button>
+                                    </div>
+                                    <p style={{ fontSize: '11px', color: '#A16207', margin: '0 0 10px' }}>Your answers teach the throttle: replies speed it up, failed deliveries slow it down before WhatsApp flags the account.</p>
+                                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                        {[
+                                            { status: 'delivered', label: '✓ Delivered', background: '#DCFCE7', color: '#166534', border: '#BBF7D0' },
+                                            { status: 'replied', label: '↩ Replied', background: '#D1FAE5', color: '#065F46', border: '#A7F3D0' },
+                                            { status: 'failed', label: '✗ Not delivered', background: '#FEE2E2', color: '#991B1B', border: '#FECACA' },
+                                            { status: 'opted_out', label: '🚫 Opted out', background: '#F3E8FF', color: '#6B21A8', border: '#E9D5FF' },
+                                        ].map(option => (
+                                            <button
+                                                key={option.status}
+                                                onClick={() => reportOutcome(awaitingOutcome[0], option.status)}
+                                                disabled={reportingId === awaitingOutcome[0].id}
+                                                style={{ padding: '8px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 700, background: option.background, color: option.color, border: `1px solid ${option.border}`, cursor: reportingId === awaitingOutcome[0].id ? 'not-allowed' : 'pointer', opacity: reportingId === awaitingOutcome[0].id ? 0.6 : 1 }}
+                                            >
+                                                {option.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                             {loading ? (
                                 <div style={{ textAlign: 'center', padding: '32px 0', color: '#666' }}>Loading dispatch queue…</div>
                             ) : !nextUnsentContact ? (
@@ -555,23 +721,37 @@ export default function BroadcastOutreachContactsPage() {
                                                     </td>
                                                     <td style={cell}>{contact.year}</td>
                                                     <td style={cell}>
-                                                        <span style={{ fontSize: '12px', fontWeight: 600, borderRadius: '100px', padding: '4px 9px', color: contact.sent_at ? '#166534' : '#9A3412', background: contact.sent_at ? '#DCFCE7' : '#FFF7ED' }}>
-                                                            {contact.sent_at ? 'Sent' : 'Not Sent'}
+                                                        <span style={{ fontSize: '12px', fontWeight: 600, borderRadius: '100px', padding: '4px 9px', color: (STATUS_CHIP[contact.delivery_status] ?? STATUS_CHIP.pending).color, background: (STATUS_CHIP[contact.delivery_status] ?? STATUS_CHIP.pending).background }}>
+                                                            {(STATUS_CHIP[contact.delivery_status] ?? STATUS_CHIP.pending).label}
                                                         </span>
                                                     </td>
                                                     <td style={cell}>
                                                         {contact.sent_at ? <span title={new Date(contact.sent_at).toLocaleString('en-GB')}>{relativeDate(contact.sent_at)}</span> : '—'}
                                                     </td>
                                                     <td style={cell}>
-                                                        {canSend ? (
+                                                        {!canSend ? '—' : contact.sent_at ? (
+                                                            <select
+                                                                value={contact.delivery_status}
+                                                                onChange={event => reportOutcome(contact, event.target.value)}
+                                                                disabled={reportingId === contact.id}
+                                                                style={{ padding: '6px 8px', border: '1px solid #DDD', borderRadius: '7px', fontSize: '12px', color: '#1A1A1A', background: '#FFF', cursor: reportingId === contact.id ? 'wait' : 'pointer' }}
+                                                                title="Report the message outcome so the throttle can adapt"
+                                                            >
+                                                                {OUTCOME_OPTIONS.map(option => (
+                                                                    <option key={option.value} value={option.value} disabled={option.value === 'sent' && contact.delivery_status !== 'sent'}>
+                                                                        {option.label}
+                                                                    </option>
+                                                                ))}
+                                                            </select>
+                                                        ) : (
                                                             <button
                                                                 onClick={() => sendMessage(contact)}
-                                                                disabled={!!contact.sent_at || updatingId === contact.id || cooldownActive || dailyBlocked}
-                                                                style={{ ...smallButtonStyle, opacity: contact.sent_at || updatingId === contact.id || cooldownActive || dailyBlocked ? .5 : 1, cursor: contact.sent_at || cooldownActive || dailyBlocked ? 'not-allowed' : 'pointer' }}
+                                                                disabled={updatingId === contact.id || cooldownActive || dailyBlocked}
+                                                                style={{ ...smallButtonStyle, opacity: updatingId === contact.id || cooldownActive || dailyBlocked ? .5 : 1, cursor: cooldownActive || dailyBlocked ? 'not-allowed' : 'pointer' }}
                                                             >
-                                                                {updatingId === contact.id ? 'Sending…' : contact.sent_at ? 'Sent' : dailyBlocked ? 'Limit Reached' : cooldownActive ? 'Paused' : 'Send Message'}
+                                                                {updatingId === contact.id ? 'Sending…' : dailyBlocked ? 'Limit Reached' : cooldownActive ? 'Paused' : 'Send Message'}
                                                             </button>
-                                                        ) : '—'}
+                                                        )}
                                                     </td>
                                                 </tr>
                                             ))}
@@ -619,6 +799,7 @@ const waveCountStyle: React.CSSProperties = { color: '#FFF', fontSize: '13px' }
 const smallTrackStyle: React.CSSProperties = { height: '7px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(255,255,255,.22)' }
 const smallFillStyle: React.CSSProperties = { height: '100%', borderRadius: 'inherit', background: '#60D6A5', transition: 'width 300ms ease' }
 const nextWaveTimeStyle: React.CSSProperties = { color: '#FFF', fontSize: '22px', fontWeight: 700, margin: '5px 0 0', lineHeight: 1.1 }
+const healthChipStyle: React.CSSProperties = { fontSize: '11px', fontWeight: 600, borderRadius: '999px', padding: '4px 10px', color: '#D6E5FF', background: 'rgba(255,255,255,.14)', border: '1px solid rgba(255,255,255,.22)' }
 const nextWaveHintStyle: React.CSSProperties = { color: '#D6E5FF', fontSize: '11px', display: 'block', marginTop: '5px' }
 const fieldLabel: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: '5px', color: '#444', fontSize: '12px', fontWeight: 600 }
 const inputStyle: React.CSSProperties = { minWidth: '130px', padding: '8px 10px', border: '1px solid #DDD', borderRadius: '8px', fontSize: '13px', color: '#1A1A1A', background: '#FFF' }

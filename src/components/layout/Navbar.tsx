@@ -25,6 +25,7 @@ const ADMIN_DROPDOWN = [
 const BROADCAST_DROPDOWN = [
     { label: 'Overview', href: '/broadcast-outreach/overview', resource: 'page:broadcast-outreach-overview' },
     { label: 'Contacts', href: '/broadcast-outreach/contacts', resource: 'page:broadcast-outreach-contacts' },
+    { label: 'Algorithm Performance', href: '/broadcast-outreach/performance', resource: 'page:broadcast-outreach-performance' },
 ]
 
 export default function Navbar() {

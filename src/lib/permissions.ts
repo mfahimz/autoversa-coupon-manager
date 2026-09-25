@@ -73,6 +73,11 @@ export const PERMISSIONS_REGISTRY: PageDef[] = [
         ],
     },
     {
+        resource: 'page:broadcast-outreach-performance',
+        label: 'Broadcast Outreach — Algorithm Performance',
+        actions: [],
+    },
+    {
         resource: 'page:broadcast-outreach-contacts',
         label: 'Broadcast Outreach — Contacts',
         actions: [

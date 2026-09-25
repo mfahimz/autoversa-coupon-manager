@@ -37,6 +37,7 @@ interface BroadcastSettings {
     cooldown_min_minutes: number
     cooldown_max_minutes: number
     daily_wave_target: number
+    adaptive_enabled: boolean
 }
 
 interface ContactUploadPreview {
@@ -71,7 +72,7 @@ export default function AdminSettingsPage() {
     const [adding, setAdding] = useState(false)
     const [editingEmirateId, setEditingEmirateId] = useState<string | null>(null)
     const [editingCategories, setEditingCategories] = useState('')
-    const [broadcastSettings, setBroadcastSettings] = useState<BroadcastSettings>({ message_template: '', image_url: null, image_storage_path: null, wave_min: 5, wave_max: 8, cooldown_min_minutes: 5, cooldown_max_minutes: 15, daily_wave_target: 20 })
+    const [broadcastSettings, setBroadcastSettings] = useState<BroadcastSettings>({ message_template: '', image_url: null, image_storage_path: null, wave_min: 5, wave_max: 8, cooldown_min_minutes: 5, cooldown_max_minutes: 15, daily_wave_target: 20, adaptive_enabled: true })
     const [broadcastTemplate, setBroadcastTemplate] = useState('')
     const [broadcastImageFile, setBroadcastImageFile] = useState<File | null>(null)
     const [broadcastImagePreview, setBroadcastImagePreview] = useState<string | null>(null)
@@ -91,6 +92,9 @@ export default function AdminSettingsPage() {
     const [overrideWaves, setOverrideWaves] = useState('')
     const [grantingOverride, setGrantingOverride] = useState(false)
     const [currentOverride, setCurrentOverride] = useState<number | null>(null)
+    const [savingAdaptive, setSavingAdaptive] = useState(false)
+    const [currentHealth, setCurrentHealth] = useState<{ score: number; consecutiveFailures: number } | null>(null)
+    const [resettingHealth, setResettingHealth] = useState(false)
 
     useEffect(() => {
         init()
@@ -164,10 +168,10 @@ export default function AdminSettingsPage() {
         const [settingsResult, sendStateResult] = await Promise.all([
             supabase
                 .from('broadcast_settings')
-                .select('message_template, image_url, image_storage_path, wave_min, wave_max, cooldown_min_minutes, cooldown_max_minutes, daily_wave_target')
+                .select('message_template, image_url, image_storage_path, wave_min, wave_max, cooldown_min_minutes, cooldown_max_minutes, daily_wave_target, adaptive_enabled')
                 .eq('id', 1)
                 .single(),
-            supabase.from('broadcast_send_state').select('daily_override_extra').eq('id', 1).single(),
+            supabase.from('broadcast_send_state').select('daily_override_extra, health_score, consecutive_failures').eq('id', 1).single(),
         ])
         const { data, error } = settingsResult
         if (error) showToast('Failed to load broadcast settings', 'error')
@@ -181,7 +185,10 @@ export default function AdminSettingsPage() {
             setCooldownMax(String(data.cooldown_max_minutes))
             setDailyWaveTarget(String(data.daily_wave_target))
         }
-        if (sendStateResult.data) setCurrentOverride(sendStateResult.data.daily_override_extra)
+        if (sendStateResult.data) {
+            setCurrentOverride(sendStateResult.data.daily_override_extra)
+            setCurrentHealth({ score: Number(sendStateResult.data.health_score ?? 60), consecutiveFailures: sendStateResult.data.consecutive_failures ?? 0 })
+        }
         setLoadingBroadcastSettings(false)
     }
 
@@ -219,6 +226,36 @@ export default function AdminSettingsPage() {
             showToast('Throttle settings saved')
         }
         setSavingThrottle(false)
+    }
+
+    async function toggleAdaptiveThrottle() {
+        const next = !broadcastSettings.adaptive_enabled
+        setSavingAdaptive(true)
+        const { error } = await supabase
+            .from('broadcast_settings')
+            .update({ adaptive_enabled: next, updated_at: new Date().toISOString(), updated_by: settingsUserId })
+            .eq('id', 1)
+        if (error) showToast('Failed to update adaptive throttle', 'error')
+        else {
+            setBroadcastSettings(current => ({ ...current, adaptive_enabled: next }))
+            showToast(next ? 'Adaptive throttle enabled' : 'Adaptive throttle disabled — configured values apply directly')
+        }
+        setSavingAdaptive(false)
+    }
+
+    async function resetHealthScore() {
+        if (!window.confirm('Reset the account health score to 60 (neutral)? Do this only after resolving the underlying issue, e.g. a new number or a lifted restriction.')) return
+        setResettingHealth(true)
+        const { error } = await supabase
+            .from('broadcast_send_state')
+            .update({ health_score: 60, consecutive_failures: 0, last_health_event: 'manual_reset', updated_at: new Date().toISOString() })
+            .eq('id', 1)
+        if (error) showToast('Failed to reset health score', 'error')
+        else {
+            setCurrentHealth({ score: 60, consecutiveFailures: 0 })
+            showToast('Health score reset to 60')
+        }
+        setResettingHealth(false)
     }
 
     async function grantOverrideWaves() {
@@ -715,6 +752,23 @@ export default function AdminSettingsPage() {
                             <div style={{ paddingTop: '20px', borderTop: '1px solid #F0F0F0' }}>
                                 <label style={labelStyle}>Send Throttling</label>
                                 <p style={{ fontSize: '12px', color: '#666', margin: '0 0 12px' }}>Configure wave batch sizes, intervals, and daily targets.</p>
+                                <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap', background: '#F8FBFF', border: '1px solid #BFDBFE', borderRadius: '10px', padding: '12px 14px', marginBottom: '14px' }}>
+                                    <label style={{ display: 'flex', gap: '8px', alignItems: 'center', color: '#162860', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
+                                        <input type="checkbox" checked={broadcastSettings.adaptive_enabled} onChange={toggleAdaptiveThrottle} disabled={savingAdaptive} />
+                                        Adaptive auto-throttle (recommended)
+                                    </label>
+                                    <span style={{ fontSize: '12px', color: '#44546F' }}>
+                                        When on, the values below are ceilings. Live limits scale down automatically from the account health score, warm-up ramp, and the last 7 days of delivery outcomes, then recover as results improve.
+                                    </span>
+                                    {currentHealth && (
+                                        <span style={{ fontSize: '12px', fontWeight: 700, borderRadius: '999px', padding: '5px 10px', color: currentHealth.score >= 60 ? '#166534' : currentHealth.score >= 20 ? '#92400E' : '#991B1B', background: currentHealth.score >= 60 ? '#DCFCE7' : currentHealth.score >= 20 ? '#FEF3C7' : '#FEE2E2' }}>
+                                            Health: {Math.round(currentHealth.score)} / 100
+                                        </span>
+                                    )}
+                                    <button onClick={resetHealthScore} disabled={resettingHealth} style={{ padding: '6px 12px', background: '#FFF', color: '#44546F', border: '1px solid #CBD5E1', borderRadius: '7px', fontSize: '12px', fontWeight: 600, cursor: resettingHealth ? 'not-allowed' : 'pointer' }}>
+                                        {resettingHealth ? 'Resetting…' : 'Reset Health Score'}
+                                    </button>
+                                </div>
                                 <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                                     <div><label style={{ ...labelStyle, fontSize: '12px' }}>Min messages per wave</label><input type="number" min={1} value={waveMin} onChange={e => setWaveMin(e.target.value)} style={{ ...inputStyle, width: '160px' }} /></div>
                                     <div><label style={{ ...labelStyle, fontSize: '12px' }}>Max messages per wave</label><input type="number" min={1} value={waveMax} onChange={e => setWaveMax(e.target.value)} style={{ ...inputStyle, width: '160px' }} /></div>
@@ -727,7 +781,7 @@ export default function AdminSettingsPage() {
                             </div>
                             <div style={{ paddingTop: '20px', borderTop: '1px solid #F0F0F0' }}>
                                 <label style={labelStyle}>Daily Limit Override</label>
-                                <p style={{ fontSize: '12px', color: '#666', margin: '0 0 12px' }}>Grant extra waves for the current 24h period once the daily target has been hit.{currentOverride !== null && currentOverride > 0 ? ` Currently granted: +${currentOverride} wave${currentOverride === 1 ? '' : 's'} today.` : ''}</p>
+                                <p style={{ fontSize: '12px', color: '#666', margin: '0 0 12px' }}>Grant extra waves for today once the daily target has been hit. Wave counters reset at 12:00 AM UAE time.{currentOverride !== null && currentOverride > 0 ? ` Currently granted: +${currentOverride} wave${currentOverride === 1 ? '' : 's'} today.` : ''}</p>
                                 <div style={{ display: 'flex', gap: '12px', alignItems: 'end', flexWrap: 'wrap' }}>
                                     <div><label style={{ ...labelStyle, fontSize: '12px' }}>Extra waves to grant</label><input type="number" min={1} value={overrideWaves} onChange={e => setOverrideWaves(e.target.value)} style={{ ...inputStyle, width: '160px' }} /></div>
                                     <button onClick={grantOverrideWaves} disabled={grantingOverride} style={{ padding: '9px 18px', backgroundColor: grantingOverride ? '#93C5E8' : '#0074BD', color: '#FFF', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: grantingOverride ? 'not-allowed' : 'pointer' }}>{grantingOverride ? 'Granting…' : 'Grant Override'}</button>

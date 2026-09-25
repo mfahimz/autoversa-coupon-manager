@@ -326,28 +326,37 @@ export type Database = {
         Row: {
           created_at: string
           created_by: string | null
+          delivery_status: string
           id: string
           mobile_number: string
           sent_at: string | null
           sent_by: string | null
+          status_updated_at: string | null
+          status_updated_by: string | null
           year: number
         }
         Insert: {
           created_at?: string
           created_by?: string | null
+          delivery_status?: string
           id?: string
           mobile_number: string
           sent_at?: string | null
           sent_by?: string | null
+          status_updated_at?: string | null
+          status_updated_by?: string | null
           year: number
         }
         Update: {
           created_at?: string
           created_by?: string | null
+          delivery_status?: string
           id?: string
           mobile_number?: string
           sent_at?: string | null
           sent_by?: string | null
+          status_updated_at?: string | null
+          status_updated_by?: string | null
           year?: number
         }
         Relationships: [
@@ -425,42 +434,94 @@ export type Database = {
       }
       broadcast_send_state: {
         Row: {
+          consecutive_failures: number
           cooldown_until: string | null
           current_wave_count: number
           daily_override_extra: number
           daily_period_started_at: string | null
+          health_score: number
           id: number
+          last_health_event: string | null
+          last_negative_at: string | null
           last_sent_at: string | null
           updated_at: string
+          warmup_started_at: string | null
           wave_target: number
           waves_completed_today: number
         }
         Insert: {
+          consecutive_failures?: number
           cooldown_until?: string | null
           current_wave_count?: number
           daily_override_extra?: number
           daily_period_started_at?: string | null
+          health_score?: number
           id?: number
+          last_health_event?: string | null
+          last_negative_at?: string | null
           last_sent_at?: string | null
           updated_at?: string
+          warmup_started_at?: string | null
           wave_target?: number
           waves_completed_today?: number
         }
         Update: {
+          consecutive_failures?: number
           cooldown_until?: string | null
           current_wave_count?: number
           daily_override_extra?: number
           daily_period_started_at?: string | null
+          health_score?: number
           id?: number
+          last_health_event?: string | null
+          last_negative_at?: string | null
           last_sent_at?: string | null
           updated_at?: string
+          warmup_started_at?: string | null
           wave_target?: number
           waves_completed_today?: number
         }
         Relationships: []
       }
+      broadcast_health_events: {
+        Row: {
+          actor: string | null
+          actor_name: string | null
+          contact_id: string | null
+          created_at: string
+          event_type: string
+          id: string
+          note: string | null
+          score_after: number
+          score_before: number
+        }
+        Insert: {
+          actor?: string | null
+          actor_name?: string | null
+          contact_id?: string | null
+          created_at?: string
+          event_type: string
+          id?: string
+          note?: string | null
+          score_after: number
+          score_before: number
+        }
+        Update: {
+          actor?: string | null
+          actor_name?: string | null
+          contact_id?: string | null
+          created_at?: string
+          event_type?: string
+          id?: string
+          note?: string | null
+          score_after?: number
+          score_before?: number
+        }
+        Relationships: []
+      }
       broadcast_settings: {
         Row: {
+          adaptive_enabled: boolean
           cooldown_max_minutes: number
           cooldown_min_minutes: number
           daily_wave_target: number
@@ -474,6 +535,7 @@ export type Database = {
           wave_min: number
         }
         Insert: {
+          adaptive_enabled?: boolean
           cooldown_max_minutes?: number
           cooldown_min_minutes?: number
           daily_wave_target?: number
@@ -487,6 +549,7 @@ export type Database = {
           wave_min?: number
         }
         Update: {
+          adaptive_enabled?: boolean
           cooldown_max_minutes?: number
           cooldown_min_minutes?: number
           daily_wave_target?: number
@@ -1397,6 +1460,54 @@ export type Database = {
           daily_period_started_at: string
           wave_target: number
           waves_completed_today: number
+          health_score: number
+          health_tier: string
+          eff_daily_wave_target: number
+        }[]
+      }
+      report_broadcast_contact_status: {
+        Args: { p_contact_id: string; p_status: string }
+        Returns: {
+          delivery_status: string
+          health_score: number
+          health_tier: string
+          cooldown_until: string | null
+          consecutive_failures: number
+        }[]
+      }
+      report_broadcast_account_warning: {
+        Args: never
+        Returns: {
+          health_score: number
+          health_tier: string
+          cooldown_until: string | null
+        }[]
+      }
+      get_broadcast_throttle_status: {
+        Args: never
+        Returns: {
+          adaptive_enabled: boolean
+          health_score: number
+          health_tier: string
+          consecutive_failures: number
+          last_health_event: string | null
+          warmup_started_at: string | null
+          warmup_day: number
+          factor: number
+          health_factor: number
+          warmup_factor: number
+          history_factor: number
+          recent_neg_rate: number | null
+          recent_outcomes: number
+          history_wave_cap: number | null
+          avg_waves_per_day: number | null
+          eff_wave_min: number
+          eff_wave_max: number
+          eff_cooldown_min_minutes: number
+          eff_cooldown_max_minutes: number
+          eff_daily_wave_target: number
+          intra_delay_min_seconds: number
+          intra_delay_max_seconds: number
         }[]
       }
       advance_m_coupon_stage: { Args: { p_b_coupon_id: string }; Returns: Json }
