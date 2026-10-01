@@ -45,14 +45,6 @@ const STATUS_CHIP: Record<string, { label: string; color: string; background: st
     opted_out: { label: 'Opted out', color: '#6B21A8', background: '#F3E8FF' },
 }
 
-const TIER_STYLE: Record<string, { label: string; color: string; background: string }> = {
-    excellent: { label: 'Excellent', color: '#065F46', background: '#D1FAE5' },
-    good: { label: 'Good', color: '#166534', background: '#DCFCE7' },
-    guarded: { label: 'Guarded', color: '#92400E', background: '#FEF3C7' },
-    risky: { label: 'Risky', color: '#9A3412', background: '#FFEDD5' },
-    critical: { label: 'Critical', color: '#991B1B', background: '#FEE2E2' },
-}
-
 function maskMobileNumber(number: string) {
     const lastFour = number.replace(/\D/g, '').slice(-4)
     return `•••• ${lastFour}`
@@ -181,8 +173,6 @@ export default function BroadcastOutreachContactsPage() {
     const cooldownActive = !!sendState.cooldown_until && new Date(sendState.cooldown_until).getTime() > now
     const cooldownRemainingMs = cooldownActive ? new Date(sendState.cooldown_until!).getTime() - now : 0
     const isWaveCooldown = cooldownActive && sendState.current_wave_count === 0
-    const isMessageCooldown = cooldownActive && sendState.current_wave_count > 0
-
     const dailyPeriodExpired = !sendState.daily_period_started_at || uaeDayKey(now) !== uaeDayKey(new Date(sendState.daily_period_started_at).getTime())
     const wavesToday = dailyPeriodExpired ? 0 : sendState.waves_completed_today
     const dailyOverride = dailyPeriodExpired ? 0 : sendState.daily_override_extra
@@ -443,13 +433,10 @@ export default function BroadcastOutreachContactsPage() {
                     <div>
                         <h1 style={{ fontSize: '22px', fontWeight: 700, color: '#1A1A1A', margin: 0 }}>Broadcast Contacts</h1>
                         <p style={{ color: '#666', fontSize: '14px', marginTop: '6px' }}>
-                            {canViewAllContacts ? 'Send the configured message to uploaded contact lists and manage outreach.' : 'Send the configured WhatsApp broadcast message to assigned contacts.'}
+                            {canViewAllContacts ? 'Send messages and manage the contact queue.' : 'Send the next WhatsApp message in the queue.'}
                         </p>
                     </div>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                        {userRole === 'ADMIN' && (
-                            <button onClick={playCooldownCompleteSound} style={{ ...buttonStyle, background: '#F0F4F8', color: '#162860', border: '1px solid #CBD5E1', cursor: 'pointer' }}>🔔 Test Alert Sound</button>
-                        )}
                         {canSend && (
                             <button onClick={reportAccountWarning} disabled={reportingWarning} style={{ ...buttonStyle, background: '#FFF1F2', color: '#9F1239', border: '1px solid #FECDD3', cursor: reportingWarning ? 'not-allowed' : 'pointer' }}>{reportingWarning ? 'Recording…' : '⚠ WhatsApp Warned Me'}</button>
                         )}
@@ -463,7 +450,7 @@ export default function BroadcastOutreachContactsPage() {
                     <section style={progressCardStyle} aria-label="Broadcast progress">
                         <div style={progressHeaderStyle}>
                             <div>
-                                <p style={eyebrowStyle}>{isWaveCooldown ? 'Next wave' : 'Current wave'}</p>
+                                <p style={eyebrowStyle}>{isWaveCooldown ? 'Next batch' : 'Current batch'}</p>
                                 <h2 style={progressTitleStyle}>{isWaveCooldown ? 'Break in progress' : 'Messages sent'}</h2>
                             </div>
                             <strong style={progressValueStyle}>{activeWaveCount} <span style={progressTotalStyle}>/ {activeWaveTarget}</span></strong>
@@ -471,61 +458,29 @@ export default function BroadcastOutreachContactsPage() {
                         <div style={progressTrackStyle} role="progressbar" aria-label="Messages sent in this wave" aria-valuemin={0} aria-valuemax={activeWaveTarget} aria-valuenow={activeWaveCount}>
                             <div style={{ ...progressFillStyle, width: `${activeWaveProgress}%` }} />
                         </div>
-                        <div style={progressFooterStyle}><span>{activeWaveProgress}% complete</span><span>{activeWaveTarget - activeWaveCount} messages left in this wave</span></div>
+                        <div style={progressFooterStyle}><span>{activeWaveProgress}% complete</span><span>{activeWaveTarget - activeWaveCount} messages left</span></div>
                         <div style={waveDividerStyle} />
                         <div style={waveGridStyle}>
                             <div>
-                                <div style={waveLabelRowStyle}><span style={waveLabelStyle}>Waves completed today</span><strong style={waveCountStyle}>{wavesToday} / {dailyLimit}</strong></div>
-                                <div style={smallTrackStyle} role="progressbar" aria-label="Waves completed today" aria-valuemin={0} aria-valuemax={dailyLimit} aria-valuenow={wavesToday}>
+                                <div style={waveLabelRowStyle}><span style={waveLabelStyle}>Batches sent today</span><strong style={waveCountStyle}>{wavesToday} / {dailyLimit}</strong></div>
+                                <div style={smallTrackStyle} role="progressbar" aria-label="Batches sent today" aria-valuemin={0} aria-valuemax={dailyLimit} aria-valuenow={wavesToday}>
                                     <div style={{ ...smallFillStyle, width: `${waveProgress}%` }} />
                                 </div>
                             </div>
                             <div>
-                                <span style={waveLabelStyle}>{isWaveCooldown ? 'Next wave in' : isMessageCooldown ? 'Next message in' : 'Status'}</span>
+                                <span style={waveLabelStyle}>{cooldownActive ? 'Ready again in' : 'Status'}</span>
                                 <p style={nextWaveTimeStyle}>{cooldownActive ? formatCountdown(cooldownRemainingMs) : 'Ready to send'}</p>
                             </div>
                         </div>
-                        {throttle && (
-                            <>
-                                <div style={waveDividerStyle} />
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                                        <span style={waveLabelStyle}>Account health</span>
-                                        <span style={{
-                                            fontSize: '12px', fontWeight: 700, borderRadius: '999px', padding: '4px 10px',
-                                            color: (TIER_STYLE[throttle.health_tier] ?? TIER_STYLE.good).color,
-                                            background: (TIER_STYLE[throttle.health_tier] ?? TIER_STYLE.good).background,
-                                        }}>
-                                            {Math.round(throttle.health_score)} / 100 · {(TIER_STYLE[throttle.health_tier] ?? TIER_STYLE.good).label}
-                                        </span>
-                                        {!throttle.adaptive_enabled && <span style={{ fontSize: '11px', fontWeight: 700, borderRadius: '999px', padding: '4px 10px', color: '#92400E', background: '#FEF3C7' }}>Adaptive throttle off</span>}
-                                    </div>
-                                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                                        {throttle.adaptive_enabled && throttle.warmup_factor < 1 && (
-                                            <span style={healthChipStyle}>Warm-up day {throttle.warmup_day + 1} · {Math.round(throttle.warmup_factor * 100)}% volume</span>
-                                        )}
-                                        {throttle.recent_neg_rate !== null && (
-                                            <span style={healthChipStyle}>Recent failure rate {Math.round(throttle.recent_neg_rate * 100)}% ({throttle.recent_outcomes} outcomes)</span>
-                                        )}
-                                        {throttle.consecutive_failures > 0 && (
-                                            <span style={healthChipStyle}>{throttle.consecutive_failures} failed in a row</span>
-                                        )}
-                                    </div>
-                                </div>
-                                <p style={{ color: '#D6E5FF', fontSize: '12px', fontWeight: 600, margin: '10px 0 0' }}>
-                                    Auto plan: waves of {throttle.eff_wave_min}–{throttle.eff_wave_max} messages · {throttle.eff_cooldown_min_minutes}–{throttle.eff_cooldown_max_minutes} min breaks · up to {throttle.eff_daily_wave_target} waves/day · {throttle.intra_delay_min_seconds}–{throttle.intra_delay_max_seconds}s between messages
-                                </p>
-                            </>
-                        )}
                     </section>
                 )}
 
                 {/* Status banner */}
                 {canSend && (dailyBlocked
-                    ? <p style={{ color: '#9A3412', background: '#FFF7ED', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontWeight: 600, margin: '0 0 16px' }}>Daily wave limit reached ({wavesToday} / {dailyLimit} waves) — ask an admin to grant additional waves for today.</p>
+                    ? <p style={{ color: '#9A3412', background: '#FFF7ED', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontWeight: 600, margin: '0 0 16px' }}>Today&apos;s sending limit has been reached.</p>
                     : cooldownActive
                     ? <p style={{ color: '#9A3412', background: '#FFF7ED', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontWeight: 600, margin: '0 0 16px' }}>Next message ready in: <strong>{formatCountdown(cooldownRemainingMs)}</strong></p>
-                    : <p style={{ color: '#1E3A8A', background: '#EFF6FF', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontWeight: 600, margin: '0 0 16px' }}>Ready to send {canViewStats ? `· Wave ${sendState.current_wave_count} / ${sendState.wave_target || settings.wave_min} · Waves today: ${wavesToday} / ${dailyLimit}` : ''}</p>
+                    : <p style={{ color: '#1E3A8A', background: '#EFF6FF', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontWeight: 600, margin: '0 0 16px' }}>Ready to send</p>
                 )}
 
                 {/* VIEW 1: Focused Sender Mode (When user does NOT have permission to view full dataset/table) */}
@@ -535,7 +490,7 @@ export default function BroadcastOutreachContactsPage() {
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
                                 <div>
                                     <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#162860', margin: 0 }}>Message Dispatch Queue</h2>
-                                    <p style={{ color: '#666', fontSize: '13px', margin: '4px 0 0' }}>Sender Workspace — dispatch assigned WhatsApp messages one at a time.</p>
+                                    <p style={{ color: '#666', fontSize: '13px', margin: '4px 0 0' }}>Send WhatsApp messages one at a time.</p>
                                 </div>
                                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                                     <span style={{ fontSize: '12px', fontWeight: 600, borderRadius: '999px', padding: '5px 12px', background: '#F0FDF4', color: '#166534', border: '1px solid #BBF7D0' }}>
@@ -561,7 +516,7 @@ export default function BroadcastOutreachContactsPage() {
                                         </div>
                                         <button onClick={() => setDismissedOutcomeIds(previous => new Set(previous).add(awaitingOutcome[0].id))} style={{ background: 'none', border: 'none', color: '#A16207', fontSize: '12px', fontWeight: 600, cursor: 'pointer', textDecoration: 'underline' }}>Skip</button>
                                     </div>
-                                    <p style={{ fontSize: '11px', color: '#A16207', margin: '0 0 10px' }}>Your answers teach the throttle: replies speed it up, failed deliveries slow it down before WhatsApp flags the account.</p>
+                                    <p style={{ fontSize: '11px', color: '#A16207', margin: '0 0 10px' }}>Please select the result so today&apos;s activity stays accurate.</p>
                                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                                         {[
                                             { status: 'delivered', label: '✓ Delivered', background: '#DCFCE7', color: '#166534', border: '#BBF7D0' },
@@ -612,15 +567,6 @@ export default function BroadcastOutreachContactsPage() {
                                         </span>
                                     </div>
 
-                                    <div style={{ background: '#FFF', borderRadius: '10px', padding: '16px', border: '1px solid #E2E8F0', marginBottom: '20px' }}>
-                                        <p style={{ fontSize: '12px', fontWeight: 600, color: '#475569', margin: '0 0 6px' }}>Workflow Instructions:</p>
-                                        <ol style={{ fontSize: '12px', color: '#64748B', margin: 0, paddingLeft: '18px', lineHeight: 1.6 }}>
-                                            <li>Click <strong>Copy Image</strong> above if your broadcast includes promotional graphics.</li>
-                                            <li>Click <strong>Send Next WhatsApp Message</strong> below to launch WhatsApp Web.</li>
-                                            <li>Paste the image in WhatsApp chat & click send. The queue will automatically refresh.</li>
-                                        </ol>
-                                    </div>
-
                                     {canSend ? (
                                         <button
                                             onClick={() => sendMessage(nextUnsentContact)}
@@ -643,7 +589,7 @@ export default function BroadcastOutreachContactsPage() {
                                                 transition: 'all 0.2s ease',
                                             }}
                                         >
-                                            {updatingId === nextUnsentContact.id ? 'Opening WhatsApp & Recording…' : dailyBlocked ? 'Daily Wave Limit Reached' : cooldownActive ? `Cooldown Active (${formatCountdown(cooldownRemainingMs)})` : 'Send Next WhatsApp Message →'}
+                                            {updatingId === nextUnsentContact.id ? 'Opening WhatsApp…' : dailyBlocked ? 'Today’s Limit Reached' : cooldownActive ? `Ready in ${formatCountdown(cooldownRemainingMs)}` : 'Send Next WhatsApp Message →'}
                                         </button>
                                     ) : (
                                         <p style={{ textAlign: 'center', color: '#64748B', fontSize: '13px', margin: 0 }}>
@@ -799,8 +745,6 @@ const waveCountStyle: React.CSSProperties = { color: '#FFF', fontSize: '13px' }
 const smallTrackStyle: React.CSSProperties = { height: '7px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(255,255,255,.22)' }
 const smallFillStyle: React.CSSProperties = { height: '100%', borderRadius: 'inherit', background: '#60D6A5', transition: 'width 300ms ease' }
 const nextWaveTimeStyle: React.CSSProperties = { color: '#FFF', fontSize: '22px', fontWeight: 700, margin: '5px 0 0', lineHeight: 1.1 }
-const healthChipStyle: React.CSSProperties = { fontSize: '11px', fontWeight: 600, borderRadius: '999px', padding: '4px 10px', color: '#D6E5FF', background: 'rgba(255,255,255,.14)', border: '1px solid rgba(255,255,255,.22)' }
-const nextWaveHintStyle: React.CSSProperties = { color: '#D6E5FF', fontSize: '11px', display: 'block', marginTop: '5px' }
 const fieldLabel: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: '5px', color: '#444', fontSize: '12px', fontWeight: 600 }
 const inputStyle: React.CSSProperties = { minWidth: '130px', padding: '8px 10px', border: '1px solid #DDD', borderRadius: '8px', fontSize: '13px', color: '#1A1A1A', background: '#FFF' }
 const buttonStyle: React.CSSProperties = { border: 'none', color: '#FFF', borderRadius: '8px', padding: '10px 16px', fontSize: '13px', fontWeight: 600, display: 'inline-flex', alignItems: 'center' }
