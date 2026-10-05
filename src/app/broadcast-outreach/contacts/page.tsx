@@ -190,19 +190,16 @@ export default function BroadcastOutreachContactsPage() {
 
     const nextUnsentContact = useMemo(() => {
         return contacts
-            .filter(c => !c.sent_at)
+            .filter(c => !c.sent_at && c.delivery_status !== 'opted_out')
             .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())[0] || null
     }, [contacts])
 
     const myStats = useMemo(() => {
         if (!userId) return { today: 0, total: 0 }
-        const todayStart = new Date()
-        todayStart.setHours(0, 0, 0, 0)
-        const todayStartMs = todayStart.getTime()
         const mySent = contacts.filter(c => c.sent_by === userId && c.sent_at)
-        const today = mySent.filter(c => new Date(c.sent_at!).getTime() >= todayStartMs).length
+        const today = mySent.filter(c => uaeDayKey(new Date(c.sent_at!).getTime()) === todayKey).length
         return { today, total: mySent.length }
-    }, [contacts, userId])
+    }, [contacts, userId, todayKey])
 
     const years = useMemo(() => Array.from(new Set(contacts.map(contact => contact.year))).sort((a, b) => b - a), [contacts])
     const filtered = useMemo(() => contacts

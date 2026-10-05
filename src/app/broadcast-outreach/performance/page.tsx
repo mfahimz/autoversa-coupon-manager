@@ -65,6 +65,9 @@ const EVENT_LABEL: Record<string, string> = {
     daily_recovery: 'Daily recovery',
     manual_reset: 'Manual health reset',
     algorithm_optimization: 'Algorithm optimization',
+    plateau_day_active: 'Plateau day active',
+    plateau_tier_advanced: 'Plateau tier advanced',
+    plateau_tier_stepped_down: 'Plateau tier stepped down',
 }
 
 // Daily wave counters reset at midnight UAE time (UTC+4, no DST).

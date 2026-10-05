@@ -78,10 +78,11 @@ export default function BroadcastOutreachOverviewPage() {
             if (!batch1.error && !batch2.error) {
                 const contacts = [...(batch1.data ?? []), ...(batch2.data ?? [])] as BroadcastContact[]
                 const now = new Date()
-                const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+                const todayKey = new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString().slice(0, 10)
                 const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
                 const sent = contacts.filter(contact => contact.sent_at)
-                const sentTodayCount = sent.filter(contact => new Date(contact.sent_at!).getTime() >= todayStart).length
+                const throttleData = throttleResult.data?.[0]
+                const sentTodayCount = throttleData?.messages_sent_today ?? sent.filter(contact => contact.sent_at && new Date(new Date(contact.sent_at).getTime() + 4 * 60 * 60 * 1000).toISOString().slice(0, 10) === todayKey).length
 
                 setStats({
                     total: contacts.length,
@@ -92,7 +93,7 @@ export default function BroadcastOutreachOverviewPage() {
 
                 const mySent = sent.filter(c => c.sent_by === user.id)
                 setMyStats({
-                    today: mySent.filter(c => new Date(c.sent_at!).getTime() >= todayStart).length,
+                    today: mySent.filter(c => c.sent_at && new Date(new Date(c.sent_at).getTime() + 4 * 60 * 60 * 1000).toISOString().slice(0, 10) === todayKey).length,
                     thisMonth: mySent.filter(c => new Date(c.sent_at!).getTime() >= monthStart).length,
                     total: mySent.length,
                 })
@@ -107,7 +108,6 @@ export default function BroadcastOutreachOverviewPage() {
                 setByYear(Array.from(grouped.entries()).map(([year, value]) => ({ year, ...value })).sort((a, b) => b.year - a.year))
 
                 if (profile.user_role === 'ADMIN') {
-                    const throttleData = throttleResult.data?.[0]
                     const currentCap = settingsResult.data?.max_daily_messages || throttleData?.max_daily_messages || 25
                     const rec = evaluateLimitRecommendation({
                         currentMax: currentCap,
