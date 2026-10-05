@@ -448,6 +448,8 @@ export type Database = {
           warmup_started_at: string | null
           wave_target: number
           waves_completed_today: number
+          days_at_current_tier: number
+          tier_base_cap: number
         }
         Insert: {
           consecutive_failures?: number
@@ -464,6 +466,8 @@ export type Database = {
           warmup_started_at?: string | null
           wave_target?: number
           waves_completed_today?: number
+          days_at_current_tier?: number
+          tier_base_cap?: number
         }
         Update: {
           consecutive_failures?: number
@@ -480,6 +484,8 @@ export type Database = {
           warmup_started_at?: string | null
           wave_target?: number
           waves_completed_today?: number
+          days_at_current_tier?: number
+          tier_base_cap?: number
         }
         Relationships: []
       }
@@ -522,6 +528,9 @@ export type Database = {
       broadcast_settings: {
         Row: {
           adaptive_enabled: boolean
+          max_daily_messages: number
+          intra_delay_min_seconds: number
+          intra_delay_max_seconds: number
           cooldown_max_minutes: number
           cooldown_min_minutes: number
           daily_wave_target: number
@@ -536,6 +545,9 @@ export type Database = {
         }
         Insert: {
           adaptive_enabled?: boolean
+          max_daily_messages?: number
+          intra_delay_min_seconds?: number
+          intra_delay_max_seconds?: number
           cooldown_max_minutes?: number
           cooldown_min_minutes?: number
           daily_wave_target?: number
@@ -550,6 +562,9 @@ export type Database = {
         }
         Update: {
           adaptive_enabled?: boolean
+          max_daily_messages?: number
+          intra_delay_min_seconds?: number
+          intra_delay_max_seconds?: number
           cooldown_max_minutes?: number
           cooldown_min_minutes?: number
           daily_wave_target?: number
@@ -1508,6 +1523,8 @@ export type Database = {
           eff_daily_wave_target: number
           intra_delay_min_seconds: number
           intra_delay_max_seconds: number
+          max_daily_messages: number
+          messages_sent_today: number
         }[]
       }
       advance_m_coupon_stage: { Args: { p_b_coupon_id: string }; Returns: Json }

@@ -38,6 +38,9 @@ interface BroadcastSettings {
     cooldown_max_minutes: number
     daily_wave_target: number
     adaptive_enabled: boolean
+    max_daily_messages?: number
+    intra_delay_min_seconds?: number
+    intra_delay_max_seconds?: number
 }
 
 interface ContactUploadPreview {
@@ -72,19 +75,22 @@ export default function AdminSettingsPage() {
     const [adding, setAdding] = useState(false)
     const [editingEmirateId, setEditingEmirateId] = useState<string | null>(null)
     const [editingCategories, setEditingCategories] = useState('')
-    const [broadcastSettings, setBroadcastSettings] = useState<BroadcastSettings>({ message_template: '', image_url: null, image_storage_path: null, wave_min: 5, wave_max: 8, cooldown_min_minutes: 5, cooldown_max_minutes: 15, daily_wave_target: 20, adaptive_enabled: true })
+    const [broadcastSettings, setBroadcastSettings] = useState<BroadcastSettings>({ message_template: '', image_url: null, image_storage_path: null, wave_min: 8, wave_max: 15, cooldown_min_minutes: 2, cooldown_max_minutes: 5, daily_wave_target: 25, adaptive_enabled: true, max_daily_messages: 150, intra_delay_min_seconds: 12, intra_delay_max_seconds: 25 })
     const [broadcastTemplate, setBroadcastTemplate] = useState('')
     const [broadcastImageFile, setBroadcastImageFile] = useState<File | null>(null)
     const [broadcastImagePreview, setBroadcastImagePreview] = useState<string | null>(null)
     const [loadingBroadcastSettings, setLoadingBroadcastSettings] = useState(false)
     const [savingBroadcastTemplate, setSavingBroadcastTemplate] = useState(false)
     const [savingBroadcastImage, setSavingBroadcastImage] = useState(false)
-    const [waveMin, setWaveMin] = useState('5')
-    const [waveMax, setWaveMax] = useState('8')
-    const [cooldownMin, setCooldownMin] = useState('5')
-    const [cooldownMax, setCooldownMax] = useState('15')
+    const [waveMin, setWaveMin] = useState('8')
+    const [waveMax, setWaveMax] = useState('15')
+    const [cooldownMin, setCooldownMin] = useState('2')
+    const [cooldownMax, setCooldownMax] = useState('5')
+    const [intraDelayMin, setIntraDelayMin] = useState('12')
+    const [intraDelayMax, setIntraDelayMax] = useState('25')
     const [savingThrottle, setSavingThrottle] = useState(false)
-    const [dailyWaveTarget, setDailyWaveTarget] = useState('20')
+    const [dailyWaveTarget, setDailyWaveTarget] = useState('25')
+    const [maxDailyMessages, setMaxDailyMessages] = useState('150')
     const [uploadYear, setUploadYear] = useState(String(new Date().getFullYear()))
     const [uploading, setUploading] = useState(false)
     const [contactUploadPreview, setContactUploadPreview] = useState<ContactUploadPreview | null>(null)
@@ -168,7 +174,7 @@ export default function AdminSettingsPage() {
         const [settingsResult, sendStateResult] = await Promise.all([
             supabase
                 .from('broadcast_settings')
-                .select('message_template, image_url, image_storage_path, wave_min, wave_max, cooldown_min_minutes, cooldown_max_minutes, daily_wave_target, adaptive_enabled')
+                .select('message_template, image_url, image_storage_path, wave_min, wave_max, cooldown_min_minutes, cooldown_max_minutes, daily_wave_target, adaptive_enabled, max_daily_messages, intra_delay_min_seconds, intra_delay_max_seconds')
                 .eq('id', 1)
                 .single(),
             supabase.from('broadcast_send_state').select('daily_override_extra, health_score, consecutive_failures').eq('id', 1).single(),
@@ -184,6 +190,9 @@ export default function AdminSettingsPage() {
             setCooldownMin(String(data.cooldown_min_minutes))
             setCooldownMax(String(data.cooldown_max_minutes))
             setDailyWaveTarget(String(data.daily_wave_target))
+            if (data.max_daily_messages) setMaxDailyMessages(String(data.max_daily_messages))
+            if (data.intra_delay_min_seconds) setIntraDelayMin(String(data.intra_delay_min_seconds))
+            if (data.intra_delay_max_seconds) setIntraDelayMax(String(data.intra_delay_max_seconds))
         }
         if (sendStateResult.data) {
             setCurrentOverride(sendStateResult.data.daily_override_extra)
@@ -212,17 +221,43 @@ export default function AdminSettingsPage() {
         const cdMin = Number(cooldownMin)
         const cdMax = Number(cooldownMax)
         const dailyTarget = Number(dailyWaveTarget)
+        const maxMsgs = Number(maxDailyMessages)
+        const intraMin = Number(intraDelayMin)
+        const intraMax = Number(intraDelayMax)
         if (!Number.isInteger(min) || !Number.isInteger(max) || min < 1 || min > max) { showToast('Min messages per wave must be ≤ max', 'error'); return }
         if (!Number.isInteger(cdMin) || !Number.isInteger(cdMax) || cdMin < 1 || cdMin > cdMax) { showToast('Min cooldown must be ≤ max cooldown', 'error'); return }
         if (!Number.isInteger(dailyTarget) || dailyTarget < 1) { showToast('Daily wave target must be a positive integer', 'error'); return }
+        if (!Number.isInteger(maxMsgs) || maxMsgs < 10) { showToast('Max daily messages must be at least 10', 'error'); return }
+        if (!Number.isInteger(intraMin) || !Number.isInteger(intraMax) || intraMin < 5 || intraMin > intraMax) { showToast('Min delay between messages must be at least 5s and ≤ max delay', 'error'); return }
         setSavingThrottle(true)
         const { error } = await supabase
             .from('broadcast_settings')
-            .update({ wave_min: min, wave_max: max, cooldown_min_minutes: cdMin, cooldown_max_minutes: cdMax, daily_wave_target: dailyTarget, updated_at: new Date().toISOString(), updated_by: settingsUserId })
+            .update({
+                wave_min: min,
+                wave_max: max,
+                cooldown_min_minutes: cdMin,
+                cooldown_max_minutes: cdMax,
+                daily_wave_target: dailyTarget,
+                max_daily_messages: maxMsgs,
+                intra_delay_min_seconds: intraMin,
+                intra_delay_max_seconds: intraMax,
+                updated_at: new Date().toISOString(),
+                updated_by: settingsUserId
+            })
             .eq('id', 1)
         if (error) showToast('Failed to save throttle settings', 'error')
         else {
-            setBroadcastSettings(current => ({ ...current, wave_min: min, wave_max: max, cooldown_min_minutes: cdMin, cooldown_max_minutes: cdMax, daily_wave_target: dailyTarget }))
+            setBroadcastSettings(current => ({
+                ...current,
+                wave_min: min,
+                wave_max: max,
+                cooldown_min_minutes: cdMin,
+                cooldown_max_minutes: cdMax,
+                daily_wave_target: dailyTarget,
+                max_daily_messages: maxMsgs,
+                intra_delay_min_seconds: intraMin,
+                intra_delay_max_seconds: intraMax,
+            }))
             showToast('Throttle settings saved')
         }
         setSavingThrottle(false)
@@ -758,7 +793,7 @@ export default function AdminSettingsPage() {
                                         Adaptive auto-throttle (recommended)
                                     </label>
                                     <span style={{ fontSize: '12px', color: '#44546F' }}>
-                                        When on, the values below are ceilings. Live limits scale down automatically from the account health score, warm-up ramp, and the last 7 days of delivery outcomes, then recover as results improve.
+                                        When on, limits scale dynamically with account health and delivery outcomes. Configured wave batch sizes and daily targets are directly honored.
                                     </span>
                                     {currentHealth && (
                                         <span style={{ fontSize: '12px', fontWeight: 700, borderRadius: '999px', padding: '5px 10px', color: currentHealth.score >= 60 ? '#166534' : currentHealth.score >= 20 ? '#92400E' : '#991B1B', background: currentHealth.score >= 60 ? '#DCFCE7' : currentHealth.score >= 20 ? '#FEF3C7' : '#FEE2E2' }}>
@@ -770,13 +805,18 @@ export default function AdminSettingsPage() {
                                     </button>
                                 </div>
                                 <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                                    <div><label style={{ ...labelStyle, fontSize: '12px' }}>Max daily messages (safety ceiling)</label><input type="number" min={10} value={maxDailyMessages} onChange={e => setMaxDailyMessages(e.target.value)} style={{ ...inputStyle, width: '160px' }} /></div>
                                     <div><label style={{ ...labelStyle, fontSize: '12px' }}>Min messages per wave</label><input type="number" min={1} value={waveMin} onChange={e => setWaveMin(e.target.value)} style={{ ...inputStyle, width: '160px' }} /></div>
                                     <div><label style={{ ...labelStyle, fontSize: '12px' }}>Max messages per wave</label><input type="number" min={1} value={waveMax} onChange={e => setWaveMax(e.target.value)} style={{ ...inputStyle, width: '160px' }} /></div>
                                     <div><label style={{ ...labelStyle, fontSize: '12px' }}>Min cooldown (minutes)</label><input type="number" min={1} value={cooldownMin} onChange={e => setCooldownMin(e.target.value)} style={{ ...inputStyle, width: '160px' }} /></div>
                                     <div><label style={{ ...labelStyle, fontSize: '12px' }}>Max cooldown (minutes)</label><input type="number" min={1} value={cooldownMax} onChange={e => setCooldownMax(e.target.value)} style={{ ...inputStyle, width: '160px' }} /></div>
+                                    <div><label style={{ ...labelStyle, fontSize: '12px' }}>Min delay between msgs (seconds)</label><input type="number" min={5} value={intraDelayMin} onChange={e => setIntraDelayMin(e.target.value)} style={{ ...inputStyle, width: '160px' }} /></div>
+                                    <div><label style={{ ...labelStyle, fontSize: '12px' }}>Max delay between msgs (seconds)</label><input type="number" min={5} value={intraDelayMax} onChange={e => setIntraDelayMax(e.target.value)} style={{ ...inputStyle, width: '160px' }} /></div>
                                     <div><label style={{ ...labelStyle, fontSize: '12px' }}>Daily wave target</label><input type="number" min={1} value={dailyWaveTarget} onChange={e => setDailyWaveTarget(e.target.value)} style={{ ...inputStyle, width: '160px' }} /></div>
                                 </div>
-                                <p style={{ fontSize: '11px', color: '#888', margin: '8px 0 0' }}>Maximum completed waves allowed per 24-hour period.</p>
+                                <p style={{ fontSize: '11px', color: '#888', margin: '8px 0 0' }}>
+                                    Human Simulation active: Delay between messages (12–25s) with randomized jitter prevents WhatsApp automated bot detection, while daily safety ceilings protect account reputation.
+                                </p>
                                 <div style={{ marginTop: '12px' }}><button onClick={saveThrottleSettings} disabled={savingThrottle} style={{ padding: '9px 18px', backgroundColor: savingThrottle ? '#93C5E8' : '#0074BD', color: '#FFF', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: savingThrottle ? 'not-allowed' : 'pointer' }}>{savingThrottle ? 'Saving…' : 'Save Throttle Settings'}</button></div>
                             </div>
                             <div style={{ paddingTop: '20px', borderTop: '1px solid #F0F0F0' }}>

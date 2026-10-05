@@ -10,6 +10,8 @@ import Navbar from '@/components/layout/Navbar'
 import Breadcrumb from '@/components/layout/Breadcrumb'
 import { checkPermission, loadPermissionsForRole, PermissionsMap } from '@/lib/permissions'
 import { toast } from 'sonner'
+import LimitReviewModal from '@/components/broadcast/LimitReviewModal'
+import { evaluateLimitRecommendation, isRecommendationDismissed, LimitRecommendation } from '@/lib/broadcastLimitAdvisor'
 
 const supabase = createClient()
 
@@ -51,6 +53,8 @@ export default function BroadcastOutreachOverviewPage() {
     const [stats, setStats] = useState<Stats>({ total: 0, totalSent: 0, sentToday: 0, sentThisMonth: 0 })
     const [myStats, setMyStats] = useState<MyStats>({ today: 0, thisMonth: 0, total: 0 })
     const [byYear, setByYear] = useState<{ year: number; total: number; sent: number }[]>([])
+    const [activeRecommendation, setActiveRecommendation] = useState<LimitRecommendation | null>(null)
+    const [showReviewModal, setShowReviewModal] = useState(false)
 
     useEffect(() => {
         async function init() {
@@ -64,9 +68,11 @@ export default function BroadcastOutreachOverviewPage() {
             setUserRole(profile.user_role)
             setPermissions(loadedPermissions)
 
-            const [batch1, batch2] = await Promise.all([
+            const [batch1, batch2, settingsResult, throttleResult] = await Promise.all([
                 supabase.from('broadcast_contacts').select('id, year, sent_at, sent_by').range(0, 999),
                 supabase.from('broadcast_contacts').select('id, year, sent_at, sent_by').range(1000, 1999),
+                supabase.from('broadcast_settings').select('max_daily_messages').eq('id', 1).single(),
+                supabase.rpc('get_broadcast_throttle_status'),
             ])
 
             if (!batch1.error && !batch2.error) {
@@ -75,11 +81,12 @@ export default function BroadcastOutreachOverviewPage() {
                 const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
                 const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime()
                 const sent = contacts.filter(contact => contact.sent_at)
+                const sentTodayCount = sent.filter(contact => new Date(contact.sent_at!).getTime() >= todayStart).length
 
                 setStats({
                     total: contacts.length,
                     totalSent: sent.length,
-                    sentToday: sent.filter(contact => new Date(contact.sent_at!).getTime() >= todayStart).length,
+                    sentToday: sentTodayCount,
                     sentThisMonth: sent.filter(contact => new Date(contact.sent_at!).getTime() >= monthStart).length,
                 })
 
@@ -98,6 +105,23 @@ export default function BroadcastOutreachOverviewPage() {
                     grouped.set(contact.year, current)
                 })
                 setByYear(Array.from(grouped.entries()).map(([year, value]) => ({ year, ...value })).sort((a, b) => b.year - a.year))
+
+                if (profile.user_role === 'ADMIN') {
+                    const throttleData = throttleResult.data?.[0]
+                    const currentCap = settingsResult.data?.max_daily_messages || throttleData?.max_daily_messages || 25
+                    const rec = evaluateLimitRecommendation({
+                        currentMax: currentCap,
+                        healthScore: Number(throttleData?.health_score ?? 100),
+                        recentNegRate: throttleData?.recent_neg_rate ?? null,
+                        consecutiveFailures: throttleData?.consecutive_failures ?? 0,
+                        messagesSentToday: sentTodayCount,
+                        recentOutcomes: throttleData?.recent_outcomes ?? 0,
+                    })
+                    setActiveRecommendation(rec)
+                    if (rec.type !== 'hold' && !isRecommendationDismissed(rec.type, rec.recommendedMax)) {
+                        setShowReviewModal(true)
+                    }
+                }
             } else {
                 console.error('Failed to load contacts:', batch1.error || batch2.error)
                 toast.error('Failed to load broadcast contacts')
@@ -131,6 +155,70 @@ export default function BroadcastOutreachOverviewPage() {
                         Open Contacts →
                     </Link>
                 </div>
+
+                {/* Active limit recommendation alert banner for Admin */}
+                {userRole === 'ADMIN' && activeRecommendation && activeRecommendation.type !== 'hold' && (
+                    <div style={{
+                        marginBottom: '24px',
+                        padding: '16px 20px',
+                        borderRadius: '14px',
+                        background: activeRecommendation.type === 'decrease' ? '#FFF1F2' : '#F0FDF4',
+                        border: `1.5px solid ${activeRecommendation.type === 'decrease' ? '#FECDD3' : '#BBF7D0'}`,
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        flexWrap: 'wrap',
+                        gap: '14px',
+                    }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <span style={{ fontSize: '22px' }}>{activeRecommendation.type === 'decrease' ? '⚠️' : '🚀'}</span>
+                            <div>
+                                <strong style={{ fontSize: '14px', color: activeRecommendation.type === 'decrease' ? '#991B1B' : '#166534' }}>
+                                    {activeRecommendation.title}
+                                </strong>
+                                <p style={{ fontSize: '13px', color: '#475569', margin: '3px 0 0' }}>
+                                    {activeRecommendation.type === 'decrease'
+                                        ? `Recent delivery signals suggest lowering daily safety cap from ${activeRecommendation.currentMax} to ${activeRecommendation.recommendedMax} messages to prevent WhatsApp restrictions.`
+                                        : `High account health detected! It is safe to increase your daily limit from ${activeRecommendation.currentMax} to ${activeRecommendation.recommendedMax} messages.`}
+                                </p>
+                            </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: '10px' }}>
+                            <button
+                                onClick={() => setShowReviewModal(true)}
+                                style={{
+                                    padding: '9px 16px',
+                                    background: activeRecommendation.type === 'decrease' ? '#DC2626' : '#0074BD',
+                                    color: '#FFF',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    fontSize: '13px',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                Review & Change Limit
+                            </button>
+                            <Link
+                                href="/broadcast-outreach/performance"
+                                style={{
+                                    padding: '9px 16px',
+                                    background: '#FFF',
+                                    color: '#334155',
+                                    border: '1px solid #CBD5E1',
+                                    borderRadius: '8px',
+                                    fontSize: '13px',
+                                    fontWeight: 600,
+                                    textDecoration: 'none',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                }}
+                            >
+                                Algorithm Performance →
+                            </Link>
+                        </div>
+                    </div>
+                )}
 
                 {canViewAllStats ? (
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '16px', marginBottom: '28px' }}>
@@ -178,6 +266,22 @@ export default function BroadcastOutreachOverviewPage() {
                     </section>
                 )}
 
+                {activeRecommendation && (
+                    <LimitReviewModal
+                        isOpen={showReviewModal}
+                        onClose={() => setShowReviewModal(false)}
+                        recommendation={activeRecommendation}
+                        isOverviewPage={true}
+                        onApply={async (newLimit) => {
+                            const { error } = await supabase
+                                .from('broadcast_settings')
+                                .update({ max_daily_messages: newLimit, updated_at: new Date().toISOString() })
+                                .eq('id', 1)
+                            if (error) throw error
+                            setActiveRecommendation(prev => prev ? { ...prev, currentMax: newLimit, type: 'hold' } : null)
+                        }}
+                    />
+                )}
             </main>
         </div>
     )

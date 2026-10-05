@@ -15,7 +15,7 @@ const supabase = createClient()
 const PAGE_SIZE_OPTIONS = [20, 50, 100, 250, 500, 1000, 2000]
 
 type BroadcastContact = { id: string; mobile_number: string; year: number; sent_at: string | null; sent_by: string | null; created_at: string; delivery_status: string }
-type BroadcastSettings = { message_template: string | null; image_url: string | null; wave_min: number; wave_max: number; cooldown_min_minutes: number; cooldown_max_minutes: number; daily_wave_target: number }
+type BroadcastSettings = { message_template: string | null; image_url: string | null; wave_min: number; wave_max: number; cooldown_min_minutes: number; cooldown_max_minutes: number; daily_wave_target: number; max_daily_messages?: number; intra_delay_min_seconds?: number; intra_delay_max_seconds?: number }
 type SendState = { current_wave_count: number; wave_target: number; cooldown_until: string | null; last_sent_at: string | null; waves_completed_today: number; daily_period_started_at: string | null; daily_override_extra: number }
 type ThrottleStatus = {
     adaptive_enabled: boolean; health_score: number; health_tier: string; consecutive_failures: number
@@ -24,21 +24,14 @@ type ThrottleStatus = {
     recent_neg_rate: number | null; recent_outcomes: number; history_wave_cap: number | null; avg_waves_per_day: number | null
     eff_wave_min: number; eff_wave_max: number; eff_cooldown_min_minutes: number; eff_cooldown_max_minutes: number
     eff_daily_wave_target: number; intra_delay_min_seconds: number; intra_delay_max_seconds: number
+    max_daily_messages?: number; messages_sent_today?: number
 }
 
 const DEFAULT_SEND_STATE: SendState = { current_wave_count: 0, wave_target: 0, cooldown_until: null, last_sent_at: null, waves_completed_today: 0, daily_period_started_at: null, daily_override_extra: 0 }
 
-const OUTCOME_OPTIONS: { value: string; label: string }[] = [
-    { value: 'sent', label: 'Awaiting result' },
-    { value: 'delivered', label: 'Delivered' },
-    { value: 'replied', label: 'Replied' },
-    { value: 'failed', label: 'Not delivered' },
-    { value: 'opted_out', label: 'Opted out / blocked' },
-]
-
 const STATUS_CHIP: Record<string, { label: string; color: string; background: string }> = {
     pending: { label: 'Not Sent', color: '#9A3412', background: '#FFF7ED' },
-    sent: { label: 'Sent · awaiting result', color: '#92400E', background: '#FEF3C7' },
+    sent: { label: 'Sent', color: '#166534', background: '#DCFCE7' },
     delivered: { label: 'Delivered', color: '#166534', background: '#DCFCE7' },
     replied: { label: 'Replied', color: '#065F46', background: '#D1FAE5' },
     failed: { label: 'Not delivered', color: '#991B1B', background: '#FEE2E2' },
@@ -95,7 +88,7 @@ export default function BroadcastOutreachContactsPage() {
     const router = useRouter()
     const [loading, setLoading] = useState(true)
     const [contacts, setContacts] = useState<BroadcastContact[]>([])
-    const [settings, setSettings] = useState<BroadcastSettings>({ message_template: null, image_url: null, wave_min: 5, wave_max: 8, cooldown_min_minutes: 5, cooldown_max_minutes: 15, daily_wave_target: 20 })
+    const [settings, setSettings] = useState<BroadcastSettings>({ message_template: null, image_url: null, wave_min: 8, wave_max: 15, cooldown_min_minutes: 2, cooldown_max_minutes: 5, daily_wave_target: 25, max_daily_messages: 25, intra_delay_min_seconds: 12, intra_delay_max_seconds: 25 })
     const [sendState, setSendState] = useState<SendState>(DEFAULT_SEND_STATE)
     const [now, setNow] = useState(() => Date.now())
     const [userRole, setUserRole] = useState('')
@@ -108,9 +101,7 @@ export default function BroadcastOutreachContactsPage() {
     const [updatingId, setUpdatingId] = useState<string | null>(null)
     const [copying, setCopying] = useState(false)
     const [throttle, setThrottle] = useState<ThrottleStatus | null>(null)
-    const [reportingId, setReportingId] = useState<string | null>(null)
     const [reportingWarning, setReportingWarning] = useState(false)
-    const [dismissedOutcomeIds, setDismissedOutcomeIds] = useState<Set<string>>(() => new Set())
     const audioContextRef = useRef<AudioContext | null>(null)
     const previousCooldownActiveRef = useRef<boolean | null>(null)
 
@@ -126,14 +117,14 @@ export default function BroadcastOutreachContactsPage() {
             const [batch1, batch2, settingsResult, sendStateResult, throttleResult] = await Promise.all([
                 supabase.from('broadcast_contacts').select('id, mobile_number, year, sent_at, sent_by, created_at, delivery_status').order('created_at', { ascending: true }).range(0, 999),
                 supabase.from('broadcast_contacts').select('id, mobile_number, year, sent_at, sent_by, created_at, delivery_status').order('created_at', { ascending: true }).range(1000, 1999),
-                supabase.from('broadcast_settings').select('message_template, image_url, wave_min, wave_max, cooldown_min_minutes, cooldown_max_minutes, daily_wave_target').eq('id', 1).single(),
+                supabase.from('broadcast_settings').select('message_template, image_url, wave_min, wave_max, cooldown_min_minutes, cooldown_max_minutes, daily_wave_target, max_daily_messages, intra_delay_min_seconds, intra_delay_max_seconds').eq('id', 1).single(),
                 supabase.from('broadcast_send_state').select('current_wave_count, wave_target, cooldown_until, last_sent_at, waves_completed_today, daily_period_started_at, daily_override_extra').eq('id', 1).single(),
                 supabase.rpc('get_broadcast_throttle_status'),
             ])
             if (batch1.error || batch2.error) toast.error('Failed to load broadcast contacts')
             const allContacts = [...(batch1.data ?? []), ...(batch2.data ?? [])] as BroadcastContact[]
             setContacts(allContacts)
-            setSettings((settingsResult.data ?? { message_template: null, image_url: null, wave_min: 5, wave_max: 8, cooldown_min_minutes: 5, cooldown_max_minutes: 15, daily_wave_target: 20 }) as BroadcastSettings)
+            setSettings((settingsResult.data ?? { message_template: null, image_url: null, wave_min: 8, wave_max: 15, cooldown_min_minutes: 2, cooldown_max_minutes: 5, daily_wave_target: 25, max_daily_messages: 25, intra_delay_min_seconds: 12, intra_delay_max_seconds: 25 }) as BroadcastSettings)
             if (sendStateResult.error && !sendStateResult.data) {
                 await supabase.from('broadcast_send_state').upsert({ id: 1, ...DEFAULT_SEND_STATE })
             }
@@ -170,18 +161,25 @@ export default function BroadcastOutreachContactsPage() {
         return () => clearInterval(interval)
     }, [userId])
 
-    const cooldownActive = !!sendState.cooldown_until && new Date(sendState.cooldown_until).getTime() > now
-    const cooldownRemainingMs = cooldownActive ? new Date(sendState.cooldown_until!).getTime() - now : 0
-    const isWaveCooldown = cooldownActive && sendState.current_wave_count === 0
     const dailyPeriodExpired = !sendState.daily_period_started_at || uaeDayKey(now) !== uaeDayKey(new Date(sendState.daily_period_started_at).getTime())
+    const currentWaveCount = dailyPeriodExpired ? 0 : sendState.current_wave_count
+    const cooldownActive = !dailyPeriodExpired && !!sendState.cooldown_until && new Date(sendState.cooldown_until).getTime() > now
+    const cooldownRemainingMs = cooldownActive ? new Date(sendState.cooldown_until!).getTime() - now : 0
+    const isWaveCooldown = cooldownActive && currentWaveCount === 0
     const wavesToday = dailyPeriodExpired ? 0 : sendState.waves_completed_today
     const dailyOverride = dailyPeriodExpired ? 0 : sendState.daily_override_extra
     const dailyLimit = (throttle?.eff_daily_wave_target ?? settings.daily_wave_target) + dailyOverride
-    const dailyBlocked = !dailyPeriodExpired && wavesToday >= dailyLimit
-    const activeWaveTarget = sendState.wave_target || throttle?.eff_wave_min || settings.wave_min
-    const activeWaveCount = Math.min(sendState.current_wave_count, activeWaveTarget)
+    const todayKey = uaeDayKey(now)
+    const messagesSentToday = throttle?.messages_sent_today ?? contacts.filter(c => c.sent_at && uaeDayKey(new Date(c.sent_at).getTime()) === todayKey).length
+    const maxDailyMessages = throttle?.max_daily_messages ?? settings.max_daily_messages ?? 25
+    const messageCapReached = messagesSentToday >= maxDailyMessages
+    const waveCapReached = !dailyPeriodExpired && wavesToday >= dailyLimit
+    const dailyBlocked = waveCapReached || messageCapReached
+    const activeWaveTarget = dailyPeriodExpired ? (throttle?.eff_wave_min || settings.wave_min) : (sendState.wave_target || throttle?.eff_wave_min || settings.wave_min)
+    const activeWaveCount = Math.min(currentWaveCount, activeWaveTarget)
     const activeWaveProgress = activeWaveTarget ? Math.round((activeWaveCount / activeWaveTarget) * 100) : 0
     const waveProgress = dailyLimit ? Math.min(100, Math.round((wavesToday / dailyLimit) * 100)) : 0
+    const messageProgress = maxDailyMessages ? Math.min(100, Math.round((messagesSentToday / maxDailyMessages) * 100)) : 0
 
     const canSend = checkPermission(permissions, userRole, 'action:broadcast_contacts:send_message', 'action')
     const canViewAllContacts = checkPermission(permissions, userRole, 'action:broadcast_contacts:view_all_contacts', 'action')
@@ -194,12 +192,6 @@ export default function BroadcastOutreachContactsPage() {
             .filter(c => !c.sent_at)
             .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())[0] || null
     }, [contacts])
-
-    const awaitingOutcome = useMemo(() => {
-        return contacts
-            .filter(c => c.delivery_status === 'sent' && c.sent_by === userId && !dismissedOutcomeIds.has(c.id))
-            .sort((a, b) => new Date(b.sent_at ?? 0).getTime() - new Date(a.sent_at ?? 0).getTime())
-    }, [contacts, userId, dismissedOutcomeIds])
 
     const myStats = useMemo(() => {
         if (!userId) return { today: 0, total: 0 }
@@ -357,6 +349,21 @@ export default function BroadcastOutreachContactsPage() {
         if (!settings.message_template?.trim()) { toast.error('Ask an admin to configure the broadcast message template first.'); return }
         void armCooldownSound()
         setUpdatingId(contact.id)
+
+        // Seamless image copy: automatically place the broadcast image on the clipboard so sender only pastes in WhatsApp Web
+        if (settings.image_url && typeof navigator !== 'undefined' && navigator.clipboard) {
+            void (async () => {
+                try {
+                    const response = await fetch(settings.image_url!)
+                    const sourceBlob = await response.blob()
+                    const pngBlob = await toPngBlob(sourceBlob)
+                    await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })])
+                } catch {
+                    // silent fallback if browser blocks background clipboard copy
+                }
+            })()
+        }
+
         const phone = contact.mobile_number.replace(/\D/g, '')
         window.open(`https://web.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(settings.message_template)}`, '_blank')
         const { data, error } = await supabase.rpc('record_broadcast_contact_sent', { p_contact_id: contact.id })
@@ -364,7 +371,7 @@ export default function BroadcastOutreachContactsPage() {
         if (error || !result) toast.error(error?.message ?? 'WhatsApp opened, but the sent status could not be saved.')
         else {
             const sentAt = result.sent_at ?? new Date().toISOString()
-            setContacts(previous => previous.map(item => item.id === contact.id ? { ...item, sent_at: sentAt, sent_by: userId, delivery_status: 'sent' } : item))
+            setContacts(previous => previous.map(item => item.id === contact.id ? { ...item, sent_at: sentAt, sent_by: userId, delivery_status: 'delivered' } : item))
             setSendState(previous => ({
                 ...previous,
                 current_wave_count: result.current_wave_count,
@@ -379,32 +386,11 @@ export default function BroadcastOutreachContactsPage() {
                 health_score: result.health_score ?? previous.health_score,
                 health_tier: result.health_tier ?? previous.health_tier,
                 eff_daily_wave_target: result.eff_daily_wave_target ?? previous.eff_daily_wave_target,
+                messages_sent_today: (previous.messages_sent_today ?? 0) + 1,
             } : previous)
             toast.success('Message marked as sent')
         }
         setUpdatingId(null)
-    }
-
-    async function reportOutcome(contact: BroadcastContact, status: string) {
-        if (!canSend || !userId || contact.delivery_status === status) return
-        setReportingId(contact.id)
-        const { data, error } = await supabase.rpc('report_broadcast_contact_status', { p_contact_id: contact.id, p_status: status })
-        const result = data?.[0]
-        if (error || !result) {
-            toast.error(error?.message ?? 'Could not save the message outcome.')
-        } else {
-            setContacts(previous => previous.map(item => item.id === contact.id ? { ...item, delivery_status: result.delivery_status } : item))
-            setThrottle(previous => previous ? {
-                ...previous,
-                health_score: result.health_score,
-                health_tier: result.health_tier,
-                consecutive_failures: result.consecutive_failures,
-            } : previous)
-            if (result.cooldown_until) setSendState(previous => ({ ...previous, cooldown_until: result.cooldown_until }))
-            const chip = STATUS_CHIP[result.delivery_status]
-            toast.success(`Outcome saved: ${chip?.label ?? result.delivery_status}`)
-        }
-        setReportingId(null)
     }
 
     async function reportAccountWarning() {
@@ -423,6 +409,31 @@ export default function BroadcastOutreachContactsPage() {
         }
         setReportingWarning(false)
     }
+
+    // Effortless Keyboard Dispatch: Space or Enter dispatches next recipient without mouse clicks
+    useEffect(() => {
+        function handleKeyDown(e: KeyboardEvent) {
+            const activeEl = document.activeElement
+            const isTyping = activeEl && (
+                activeEl.tagName === 'INPUT' ||
+                activeEl.tagName === 'TEXTAREA' ||
+                activeEl.tagName === 'SELECT' ||
+                (activeEl as HTMLElement).isContentEditable
+            )
+            if (isTyping) return
+            if (e.metaKey || e.ctrlKey || e.altKey) return
+
+            if (e.key === ' ' || e.key === 'Enter') {
+                if (!canSend || !userId || cooldownActive || dailyBlocked || updatingId) return
+                if (!nextUnsentContact) return
+                e.preventDefault()
+                void sendMessage(nextUnsentContact)
+            }
+        }
+
+        window.addEventListener('keydown', handleKeyDown)
+        return () => window.removeEventListener('keydown', handleKeyDown)
+    }, [canSend, userId, cooldownActive, dailyBlocked, updatingId, nextUnsentContact, settings.message_template, settings.image_url])
 
     return (
         <div style={{ minHeight: '100vh', background: '#F7F7F7', paddingTop: '16px' }}>
@@ -468,8 +479,14 @@ export default function BroadcastOutreachContactsPage() {
                                 </div>
                             </div>
                             <div>
+                                <div style={waveLabelRowStyle}><span style={waveLabelStyle}>Daily messages (safety ceiling)</span><strong style={waveCountStyle}>{messagesSentToday} / {maxDailyMessages}</strong></div>
+                                <div style={smallTrackStyle} role="progressbar" aria-label="Messages sent today" aria-valuemin={0} aria-valuemax={maxDailyMessages} aria-valuenow={messagesSentToday}>
+                                    <div style={{ ...smallFillStyle, width: `${messageProgress}%`, background: messageCapReached ? '#F87171' : '#60D6A5' }} />
+                                </div>
+                            </div>
+                            <div>
                                 <span style={waveLabelStyle}>{cooldownActive ? 'Ready again in' : 'Status'}</span>
-                                <p style={nextWaveTimeStyle}>{cooldownActive ? formatCountdown(cooldownRemainingMs) : 'Ready to send'}</p>
+                                <p style={nextWaveTimeStyle}>{cooldownActive ? formatCountdown(cooldownRemainingMs) : dailyBlocked ? 'Limit Reached' : 'Ready to send'}</p>
                             </div>
                         </div>
                     </section>
@@ -477,7 +494,11 @@ export default function BroadcastOutreachContactsPage() {
 
                 {/* Status banner */}
                 {canSend && (dailyBlocked
-                    ? <p style={{ color: '#9A3412', background: '#FFF7ED', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontWeight: 600, margin: '0 0 16px' }}>Today&apos;s sending limit has been reached.</p>
+                    ? <p style={{ color: '#9A3412', background: '#FFF7ED', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontWeight: 600, margin: '0 0 16px' }}>
+                        {messageCapReached
+                            ? `Daily safety ceiling reached (${messagesSentToday}/${maxDailyMessages} messages sent). Sending paused to protect your WhatsApp account.`
+                            : `Today's batch limit has been reached (${wavesToday}/${dailyLimit} batches completed).`}
+                    </p>
                     : cooldownActive
                     ? <p style={{ color: '#9A3412', background: '#FFF7ED', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontWeight: 600, margin: '0 0 16px' }}>Next message ready in: <strong>{formatCountdown(cooldownRemainingMs)}</strong></p>
                     : <p style={{ color: '#1E3A8A', background: '#EFF6FF', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontWeight: 600, margin: '0 0 16px' }}>Ready to send</p>
@@ -490,52 +511,20 @@ export default function BroadcastOutreachContactsPage() {
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
                                 <div>
                                     <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#162860', margin: 0 }}>Message Dispatch Queue</h2>
-                                    <p style={{ color: '#666', fontSize: '13px', margin: '4px 0 0' }}>Send WhatsApp messages one at a time.</p>
+                                    <p style={{ color: '#666', fontSize: '13px', margin: '4px 0 0' }}>Send WhatsApp messages one at a time · Human-paced with randomized pauses to protect against bot detection.</p>
                                 </div>
                                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                                     <span style={{ fontSize: '12px', fontWeight: 600, borderRadius: '999px', padding: '5px 12px', background: '#F0FDF4', color: '#166534', border: '1px solid #BBF7D0' }}>
                                         You sent: <strong>{myStats.today}</strong> today · <strong>{myStats.total}</strong> total
                                     </span>
                                     <span style={{ fontSize: '12px', fontWeight: 600, borderRadius: '999px', padding: '5px 12px', background: cooldownActive ? '#FFF7ED' : dailyBlocked ? '#FEE2E2' : '#DCFCE7', color: cooldownActive ? '#9A3412' : dailyBlocked ? '#991B1B' : '#166534' }}>
-                                        {dailyBlocked ? 'Daily Limit Reached' : cooldownActive ? 'Please Wait' : 'Ready to Send'}
+                                        {messageCapReached ? 'Daily Message Cap Reached' : dailyBlocked ? 'Daily Limit Reached' : cooldownActive ? 'Please Wait' : 'Ready to Send'}
                                     </span>
                                 </div>
                             </div>
                         </div>
 
                         <div style={{ padding: '32px 28px' }}>
-                            {!loading && canSend && awaitingOutcome.length > 0 && (
-                                <div style={{ maxWidth: '640px', margin: '0 auto 20px', background: '#FFFBEB', borderRadius: '14px', border: '1px solid #FDE68A', padding: '18px 20px' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '12px' }}>
-                                        <div>
-                                            <p style={{ fontSize: '13px', fontWeight: 700, color: '#92400E', margin: 0 }}>How did the last message go?</p>
-                                            <p style={{ fontSize: '12px', color: '#A16207', margin: '3px 0 0' }}>
-                                                {maskMobileNumber(awaitingOutcome[0].mobile_number)} · sent {awaitingOutcome[0].sent_at ? relativeDate(awaitingOutcome[0].sent_at) : 'recently'}
-                                                {awaitingOutcome.length > 1 ? ` · ${awaitingOutcome.length - 1} more awaiting` : ''}
-                                            </p>
-                                        </div>
-                                        <button onClick={() => setDismissedOutcomeIds(previous => new Set(previous).add(awaitingOutcome[0].id))} style={{ background: 'none', border: 'none', color: '#A16207', fontSize: '12px', fontWeight: 600, cursor: 'pointer', textDecoration: 'underline' }}>Skip</button>
-                                    </div>
-                                    <p style={{ fontSize: '11px', color: '#A16207', margin: '0 0 10px' }}>Please select the result so today&apos;s activity stays accurate.</p>
-                                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                                        {[
-                                            { status: 'delivered', label: '✓ Delivered', background: '#DCFCE7', color: '#166534', border: '#BBF7D0' },
-                                            { status: 'replied', label: '↩ Replied', background: '#D1FAE5', color: '#065F46', border: '#A7F3D0' },
-                                            { status: 'failed', label: '✗ Not delivered', background: '#FEE2E2', color: '#991B1B', border: '#FECACA' },
-                                            { status: 'opted_out', label: '🚫 Opted out', background: '#F3E8FF', color: '#6B21A8', border: '#E9D5FF' },
-                                        ].map(option => (
-                                            <button
-                                                key={option.status}
-                                                onClick={() => reportOutcome(awaitingOutcome[0], option.status)}
-                                                disabled={reportingId === awaitingOutcome[0].id}
-                                                style={{ padding: '8px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 700, background: option.background, color: option.color, border: `1px solid ${option.border}`, cursor: reportingId === awaitingOutcome[0].id ? 'not-allowed' : 'pointer', opacity: reportingId === awaitingOutcome[0].id ? 0.6 : 1 }}
-                                            >
-                                                {option.label}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
                             {loading ? (
                                 <div style={{ textAlign: 'center', padding: '32px 0', color: '#666' }}>Loading dispatch queue…</div>
                             ) : !nextUnsentContact ? (
@@ -568,29 +557,37 @@ export default function BroadcastOutreachContactsPage() {
                                     </div>
 
                                     {canSend ? (
-                                        <button
-                                            onClick={() => sendMessage(nextUnsentContact)}
-                                            disabled={updatingId === nextUnsentContact.id || cooldownActive || dailyBlocked}
-                                            style={{
-                                                width: '100%',
-                                                padding: '14px 20px',
-                                                fontSize: '15px',
-                                                fontWeight: 700,
-                                                color: '#FFF',
-                                                background: cooldownActive || dailyBlocked ? '#94A3B8' : '#25D366',
-                                                border: 'none',
-                                                borderRadius: '10px',
-                                                cursor: cooldownActive || dailyBlocked ? 'not-allowed' : 'pointer',
-                                                boxShadow: cooldownActive || dailyBlocked ? 'none' : '0 4px 12px rgba(37, 211, 102, 0.28)',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                justifyContent: 'center',
-                                                gap: '10px',
-                                                transition: 'all 0.2s ease',
-                                            }}
-                                        >
-                                            {updatingId === nextUnsentContact.id ? 'Opening WhatsApp…' : dailyBlocked ? 'Today’s Limit Reached' : cooldownActive ? `Ready in ${formatCountdown(cooldownRemainingMs)}` : 'Send Next WhatsApp Message →'}
-                                        </button>
+                                        <>
+                                            <button
+                                                onClick={() => sendMessage(nextUnsentContact)}
+                                                disabled={updatingId === nextUnsentContact.id || cooldownActive || dailyBlocked}
+                                                style={{
+                                                    width: '100%',
+                                                    padding: '14px 20px',
+                                                    fontSize: '15px',
+                                                    fontWeight: 700,
+                                                    color: '#FFF',
+                                                    background: cooldownActive || dailyBlocked ? '#94A3B8' : '#25D366',
+                                                    border: 'none',
+                                                    borderRadius: '10px',
+                                                    cursor: cooldownActive || dailyBlocked ? 'not-allowed' : 'pointer',
+                                                    boxShadow: cooldownActive || dailyBlocked ? 'none' : '0 4px 12px rgba(37, 211, 102, 0.28)',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                    gap: '10px',
+                                                    transition: 'all 0.2s ease',
+                                                }}
+                                            >
+                                                {updatingId === nextUnsentContact.id ? 'Opening WhatsApp…' : messageCapReached ? `Daily Safety Cap Reached (${maxDailyMessages})` : dailyBlocked ? 'Today’s Batch Limit Reached' : cooldownActive ? `Ready in ${formatCountdown(cooldownRemainingMs)}` : 'Send Next WhatsApp Message [Space ↵] →'}
+                                            </button>
+                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', marginTop: '10px', fontSize: '12px', color: '#64748B' }}>
+                                                <kbd style={{ background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '4px', padding: '2px 6px', fontSize: '11px', fontFamily: 'monospace', color: '#334155' }}>Space</kbd>
+                                                <span>or</span>
+                                                <kbd style={{ background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '4px', padding: '2px 6px', fontSize: '11px', fontFamily: 'monospace', color: '#334155' }}>Enter</kbd>
+                                                <span>to send without clicking · Image is auto-copied to clipboard</span>
+                                            </div>
+                                        </>
                                     ) : (
                                         <p style={{ textAlign: 'center', color: '#64748B', fontSize: '13px', margin: 0 }}>
                                             You do not have permission to dispatch messages. Contact an admin.
@@ -621,7 +618,27 @@ export default function BroadcastOutreachContactsPage() {
                                     </label>
                                 )}
                             </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                                {canSend && nextUnsentContact && (
+                                    <button
+                                        type="button"
+                                        onClick={() => sendMessage(nextUnsentContact)}
+                                        disabled={updatingId === nextUnsentContact.id || cooldownActive || dailyBlocked}
+                                        style={{
+                                            ...smallButtonStyle,
+                                            background: cooldownActive || dailyBlocked ? '#94A3B8' : '#25D366',
+                                            cursor: cooldownActive || dailyBlocked ? 'not-allowed' : 'pointer',
+                                            padding: '8px 14px',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '6px',
+                                            boxShadow: cooldownActive || dailyBlocked ? 'none' : '0 2px 6px rgba(37,211,102,0.3)',
+                                        }}
+                                        title="Quick dispatch next pending contact (Shortcut: Space or Enter)"
+                                    >
+                                        <span>⚡ Dispatch Next ({maskMobileNumber(nextUnsentContact.mobile_number)}) [Space ↵]</span>
+                                    </button>
+                                )}
                                 <label style={{ fontSize: '12px', color: '#666', fontWeight: 600 }}>
                                     Rows per page:
                                     <select
@@ -676,26 +693,14 @@ export default function BroadcastOutreachContactsPage() {
                                                     </td>
                                                     <td style={cell}>
                                                         {!canSend ? '—' : contact.sent_at ? (
-                                                            <select
-                                                                value={contact.delivery_status}
-                                                                onChange={event => reportOutcome(contact, event.target.value)}
-                                                                disabled={reportingId === contact.id}
-                                                                style={{ padding: '6px 8px', border: '1px solid #DDD', borderRadius: '7px', fontSize: '12px', color: '#1A1A1A', background: '#FFF', cursor: reportingId === contact.id ? 'wait' : 'pointer' }}
-                                                                title="Report the message outcome so the throttle can adapt"
-                                                            >
-                                                                {OUTCOME_OPTIONS.map(option => (
-                                                                    <option key={option.value} value={option.value} disabled={option.value === 'sent' && contact.delivery_status !== 'sent'}>
-                                                                        {option.label}
-                                                                    </option>
-                                                                ))}
-                                                            </select>
+                                                            <span style={{ fontSize: '12px', color: '#166534', fontWeight: 600 }}>Sent</span>
                                                         ) : (
                                                             <button
                                                                 onClick={() => sendMessage(contact)}
                                                                 disabled={updatingId === contact.id || cooldownActive || dailyBlocked}
                                                                 style={{ ...smallButtonStyle, opacity: updatingId === contact.id || cooldownActive || dailyBlocked ? .5 : 1, cursor: cooldownActive || dailyBlocked ? 'not-allowed' : 'pointer' }}
                                                             >
-                                                                {updatingId === contact.id ? 'Sending…' : dailyBlocked ? 'Limit Reached' : cooldownActive ? 'Paused' : 'Send Message'}
+                                                                {updatingId === contact.id ? 'Sending…' : messageCapReached ? 'Safety Cap' : dailyBlocked ? 'Limit Reached' : cooldownActive ? 'Paused' : 'Send Message'}
                                                             </button>
                                                         )}
                                                     </td>

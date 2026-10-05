@@ -9,6 +9,9 @@ import Navbar from '@/components/layout/Navbar'
 import Breadcrumb from '@/components/layout/Breadcrumb'
 import { checkPermission, loadPermissionsForRole } from '@/lib/permissions'
 import { toast } from 'sonner'
+import LimitReviewModal from '@/components/broadcast/LimitReviewModal'
+import ProjectedScheduleTable from '@/components/broadcast/ProjectedScheduleTable'
+import { evaluateLimitRecommendation, isRecommendationDismissed, LimitRecommendation } from '@/lib/broadcastLimitAdvisor'
 import {
     ResponsiveContainer, LineChart, Line, BarChart, Bar,
     XAxis, YAxis, CartesianGrid, Tooltip,
@@ -25,9 +28,20 @@ type ThrottleStatus = {
     recent_neg_rate: number | null; recent_outcomes: number; history_wave_cap: number | null; avg_waves_per_day: number | null
     eff_wave_min: number; eff_wave_max: number; eff_cooldown_min_minutes: number; eff_cooldown_max_minutes: number
     eff_daily_wave_target: number; intra_delay_min_seconds: number; intra_delay_max_seconds: number
+    max_daily_messages?: number; messages_sent_today?: number
 }
 
-type Settings = { wave_min: number; wave_max: number; cooldown_min_minutes: number; cooldown_max_minutes: number; daily_wave_target: number; adaptive_enabled: boolean }
+type Settings = {
+    wave_min: number
+    wave_max: number
+    cooldown_min_minutes: number
+    cooldown_max_minutes: number
+    daily_wave_target: number
+    adaptive_enabled: boolean
+    max_daily_messages?: number
+    intra_delay_min_seconds?: number
+    intra_delay_max_seconds?: number
+}
 type SendStateRow = { cooldown_until: string | null; waves_completed_today: number; daily_period_started_at: string | null; daily_override_extra: number; last_sent_at: string | null }
 type HealthEvent = { id: string; created_at: string; event_type: string; score_before: number; score_after: number; actor_name: string | null; note: string | null }
 type WaveLogRow = { completed_at: string; messages_sent: number }
@@ -50,6 +64,7 @@ const EVENT_LABEL: Record<string, string> = {
     account_warning: 'WhatsApp account warning (24h pause)',
     daily_recovery: 'Daily recovery',
     manual_reset: 'Manual health reset',
+    algorithm_optimization: 'Algorithm optimization',
 }
 
 // Daily wave counters reset at midnight UAE time (UTC+4, no DST).
@@ -81,6 +96,7 @@ const tooltipStyle: React.CSSProperties = { background: '#FFF', border: '1px sol
 export default function BroadcastAlgorithmPerformancePage() {
     const router = useRouter()
     const [loading, setLoading] = useState(true)
+    const [userRole, setUserRole] = useState('')
     const [throttle, setThrottle] = useState<ThrottleStatus | null>(null)
     const [settings, setSettings] = useState<Settings | null>(null)
     const [sendState, setSendState] = useState<SendStateRow | null>(null)
@@ -88,20 +104,47 @@ export default function BroadcastAlgorithmPerformancePage() {
     const [waveLogs, setWaveLogs] = useState<WaveLogRow[]>([])
     const [outcomeCounts, setOutcomeCounts] = useState<Record<string, number>>({})
     const [refreshing, setRefreshing] = useState(false)
+    const [maxDailyMessagesInput, setMaxDailyMessagesInput] = useState('150')
+    const [waveMinInput, setWaveMinInput] = useState('8')
+    const [waveMaxInput, setWaveMaxInput] = useState('15')
+    const [cooldownMinInput, setCooldownMinInput] = useState('2')
+    const [cooldownMaxInput, setCooldownMaxInput] = useState('5')
+    const [intraDelayMinInput, setIntraDelayMinInput] = useState('12')
+    const [intraDelayMaxInput, setIntraDelayMaxInput] = useState('25')
+    const [dailyWaveTargetInput, setDailyWaveTargetInput] = useState('25')
+    const [savingSettings, setSavingSettings] = useState(false)
+    const [sentToday, setSentToday] = useState(0)
+    const [activeRecommendation, setActiveRecommendation] = useState<LimitRecommendation | null>(null)
+    const [showReviewModal, setShowReviewModal] = useState(false)
 
     async function loadData() {
-        const [throttleResult, settingsResult, stateResult, eventsResult, wavesResult, batch1, batch2] = await Promise.all([
+        const uaeMidnight = `${uaeDayKey(Date.now())}T00:00:00+04:00`
+        const [throttleResult, settingsResult, stateResult, eventsResult, wavesResult, batch1, batch2, todaySentResult] = await Promise.all([
             supabase.rpc('get_broadcast_throttle_status'),
-            supabase.from('broadcast_settings').select('wave_min, wave_max, cooldown_min_minutes, cooldown_max_minutes, daily_wave_target, adaptive_enabled').eq('id', 1).single(),
+            supabase.from('broadcast_settings').select('wave_min, wave_max, cooldown_min_minutes, cooldown_max_minutes, daily_wave_target, adaptive_enabled, max_daily_messages, intra_delay_min_seconds, intra_delay_max_seconds').eq('id', 1).single(),
             supabase.from('broadcast_send_state').select('cooldown_until, waves_completed_today, daily_period_started_at, daily_override_extra, last_sent_at').eq('id', 1).single(),
             supabase.from('broadcast_health_events').select('id, created_at, event_type, score_before, score_after, actor_name, note').order('created_at', { ascending: false }).limit(300),
             supabase.from('broadcast_wave_logs').select('completed_at, messages_sent').order('completed_at', { ascending: false }).limit(500),
             supabase.from('broadcast_contacts').select('delivery_status').range(0, 999),
             supabase.from('broadcast_contacts').select('delivery_status').range(1000, 1999),
+            supabase.from('broadcast_contacts').select('id', { count: 'exact', head: true }).gte('sent_at', uaeMidnight),
         ])
         if (throttleResult.error) toast.error('Failed to load algorithm status')
-        if (throttleResult.data?.[0]) setThrottle(throttleResult.data[0] as ThrottleStatus)
-        if (settingsResult.data) setSettings(settingsResult.data as Settings)
+        const throttleData = throttleResult.data?.[0] as ThrottleStatus | undefined
+        if (throttleData) setThrottle(throttleData)
+        const settingsData = settingsResult.data as Settings | null
+        if (settingsData) {
+            setSettings(settingsData)
+            const cap = settingsData.max_daily_messages || throttleData?.max_daily_messages || 25
+            setMaxDailyMessagesInput(String(cap))
+            setWaveMinInput(String(settingsData.wave_min ?? 8))
+            setWaveMaxInput(String(settingsData.wave_max ?? 15))
+            setCooldownMinInput(String(settingsData.cooldown_min_minutes ?? 2))
+            setCooldownMaxInput(String(settingsData.cooldown_max_minutes ?? 5))
+            setIntraDelayMinInput(String(settingsData.intra_delay_min_seconds ?? 12))
+            setIntraDelayMaxInput(String(settingsData.intra_delay_max_seconds ?? 25))
+            setDailyWaveTargetInput(String(settingsData.daily_wave_target ?? 25))
+        }
         if (stateResult.data) setSendState(stateResult.data as SendStateRow)
         setEvents((eventsResult.data ?? []) as HealthEvent[])
         setWaveLogs((wavesResult.data ?? []) as WaveLogRow[])
@@ -110,6 +153,141 @@ export default function BroadcastAlgorithmPerformancePage() {
             counts[row.delivery_status] = (counts[row.delivery_status] ?? 0) + 1
         }
         setOutcomeCounts(counts)
+
+        const countToday = todaySentResult.count ?? throttleData?.messages_sent_today ?? 0
+        setSentToday(countToday)
+
+        const currentCap = settingsData?.max_daily_messages || throttleData?.max_daily_messages || 25
+        const rec = evaluateLimitRecommendation({
+            currentMax: currentCap,
+            healthScore: Number(throttleData?.health_score ?? 100),
+            recentNegRate: throttleData?.recent_neg_rate ?? null,
+            consecutiveFailures: throttleData?.consecutive_failures ?? 0,
+            messagesSentToday: countToday,
+            recentOutcomes: throttleData?.recent_outcomes ?? 0,
+        })
+        setActiveRecommendation(rec)
+        if (rec.type !== 'hold' && !isRecommendationDismissed(rec.type, rec.recommendedMax)) {
+            setShowReviewModal(true)
+        }
+    }
+
+    async function saveAlgorithmParameters(overrides?: Partial<{
+        max_daily_messages: number
+        wave_min: number
+        wave_max: number
+        cooldown_min_minutes: number
+        cooldown_max_minutes: number
+        intra_delay_min_seconds: number
+        intra_delay_max_seconds: number
+        daily_wave_target: number
+    }>) {
+        const maxDaily = overrides?.max_daily_messages ?? parseInt(maxDailyMessagesInput, 10)
+        const wMin = overrides?.wave_min ?? parseInt(waveMinInput, 10)
+        const wMax = overrides?.wave_max ?? parseInt(waveMaxInput, 10)
+        const cdMin = overrides?.cooldown_min_minutes ?? parseInt(cooldownMinInput, 10)
+        const cdMax = overrides?.cooldown_max_minutes ?? parseInt(cooldownMaxInput, 10)
+        const intraMin = overrides?.intra_delay_min_seconds ?? parseInt(intraDelayMinInput, 10)
+        const intraMax = overrides?.intra_delay_max_seconds ?? parseInt(intraDelayMaxInput, 10)
+        const dailyWaves = overrides?.daily_wave_target ?? parseInt(dailyWaveTargetInput, 10)
+
+        if (isNaN(maxDaily) || maxDaily < 10) { toast.error('Max daily messages must be at least 10'); return }
+        if (isNaN(wMin) || isNaN(wMax) || wMin < 1 || wMin > wMax) { toast.error('Min wave size must be ≤ max wave size'); return }
+        if (isNaN(cdMin) || isNaN(cdMax) || cdMin < 1 || cdMin > cdMax) { toast.error('Min cooldown must be ≤ max cooldown'); return }
+        if (isNaN(intraMin) || isNaN(intraMax) || intraMin < 5 || intraMin > intraMax) { toast.error('Delay between messages must be at least 5s and min ≤ max'); return }
+        if (isNaN(dailyWaves) || dailyWaves < 1) { toast.error('Daily wave target must be a positive integer'); return }
+
+        setSavingSettings(true)
+        const { error } = await supabase
+            .from('broadcast_settings')
+            .update({
+                max_daily_messages: maxDaily,
+                wave_min: wMin,
+                wave_max: wMax,
+                cooldown_min_minutes: cdMin,
+                cooldown_max_minutes: cdMax,
+                intra_delay_min_seconds: intraMin,
+                intra_delay_max_seconds: intraMax,
+                daily_wave_target: dailyWaves,
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', 1)
+
+        if (error) {
+            toast.error('Failed to save algorithm parameters')
+        } else {
+            toast.success('Algorithm timing and safety controls updated')
+            setMaxDailyMessagesInput(String(maxDaily))
+            setWaveMinInput(String(wMin))
+            setWaveMaxInput(String(wMax))
+            setCooldownMinInput(String(cdMin))
+            setCooldownMaxInput(String(cdMax))
+            setIntraDelayMinInput(String(intraMin))
+            setIntraDelayMaxInput(String(intraMax))
+            setDailyWaveTargetInput(String(dailyWaves))
+            setSettings(prev => prev ? {
+                ...prev,
+                max_daily_messages: maxDaily,
+                wave_min: wMin,
+                wave_max: wMax,
+                cooldown_min_minutes: cdMin,
+                cooldown_max_minutes: cdMax,
+                intra_delay_min_seconds: intraMin,
+                intra_delay_max_seconds: intraMax,
+                daily_wave_target: dailyWaves,
+            } : prev)
+            await refresh()
+        }
+        setSavingSettings(false)
+    }
+
+    function applyPreset(preset: 'natural' | 'fast' | 'conservative') {
+        if (preset === 'natural') {
+            setIntraDelayMinInput('12')
+            setIntraDelayMaxInput('25')
+            setWaveMinInput('8')
+            setWaveMaxInput('15')
+            setCooldownMinInput('3')
+            setCooldownMaxInput('6')
+            toast.info('Selected "Natural Human" preset (12–25s delay, 8–15 msgs/batch, 3–6m break). Click "Save Settings" to apply.')
+        } else if (preset === 'fast') {
+            setIntraDelayMinInput('8')
+            setIntraDelayMaxInput('16')
+            setWaveMinInput('10')
+            setWaveMaxInput('18')
+            setCooldownMinInput('2')
+            setCooldownMaxInput('4')
+            toast.info('Selected "Fast Human" preset (8–16s delay, 10–18 msgs/batch, 2–4m break). Click "Save Settings" to apply.')
+        } else if (preset === 'conservative') {
+            setIntraDelayMinInput('18')
+            setIntraDelayMaxInput('35')
+            setWaveMinInput('6')
+            setWaveMaxInput('10')
+            setCooldownMinInput('5')
+            setCooldownMaxInput('10')
+            toast.info('Selected "Ultra-Safe Stealth" preset (18–35s delay, 6–10 msgs/batch, 5–10m break). Click "Save Settings" to apply.')
+        }
+    }
+
+    function handleApplyDayPlan(params: {
+        max_daily_messages: number
+        wave_min: number
+        wave_max: number
+        daily_wave_target: number
+        cooldown_min_minutes: number
+        cooldown_max_minutes: number
+        intra_delay_min_seconds: number
+        intra_delay_max_seconds: number
+    }) {
+        setMaxDailyMessagesInput(String(params.max_daily_messages))
+        setWaveMinInput(String(params.wave_min))
+        setWaveMaxInput(String(params.wave_max))
+        setDailyWaveTargetInput(String(params.daily_wave_target))
+        setCooldownMinInput(String(params.cooldown_min_minutes))
+        setCooldownMaxInput(String(params.cooldown_max_minutes))
+        setIntraDelayMinInput(String(params.intra_delay_min_seconds))
+        setIntraDelayMaxInput(String(params.intra_delay_max_seconds))
+        toast.info(`Loaded ${params.max_daily_messages} msgs/day plan into controls above. Click "Save Algorithm Controls" to apply.`)
     }
 
     useEffect(() => {
@@ -118,6 +296,7 @@ export default function BroadcastAlgorithmPerformancePage() {
             if (!user) { router.push('/login'); return }
             const { data: profile } = await supabase.from('profiles').select('user_role, is_active').eq('id', user.id).single<{ user_role: string; is_active: boolean | null }>()
             if (!profile || profile.is_active === false) { router.push('/login'); return }
+            setUserRole(profile.user_role)
             const loadedPermissions = await loadPermissionsForRole(profile.user_role)
             if (!checkPermission(loadedPermissions, profile.user_role, 'page:broadcast-outreach-performance', 'view')) { router.push('/dashboard'); return }
             await loadData()
@@ -226,6 +405,292 @@ export default function BroadcastAlgorithmPerformancePage() {
                             </p>
                         )}
 
+                        {/* WhatsApp Anti-Block & Human-Paced Timing Control Panel */}
+                        <section id="max-messages-control" style={{
+                            background: '#FFF',
+                            borderRadius: '16px',
+                            border: '1.5px solid #0074BD',
+                            boxShadow: '0 2px 8px rgba(0, 116, 189, 0.08)',
+                            padding: '22px 26px',
+                            marginBottom: '20px',
+                        }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
+                                <div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                        <span style={{ fontSize: '20px' }}>🛡️</span>
+                                        <h2 style={{ fontSize: '17px', fontWeight: 700, color: '#162860', margin: 0 }}>
+                                            Human-Paced Outreach & Anti-Bot Timing Controls
+                                        </h2>
+                                        <span style={{ fontSize: '11px', fontWeight: 700, background: '#DCFCE7', color: '#166534', padding: '3px 10px', borderRadius: '999px', border: '1px solid #BBF7D0' }}>
+                                            Anti-Bot Protection Active
+                                        </span>
+                                    </div>
+                                    <p style={{ fontSize: '13px', color: '#64748B', margin: '6px 0 0', maxWidth: '780px', lineHeight: 1.5 }}>
+                                        Controls messaging frequency, batch sizes, and inter-message pauses to mimic genuine human interaction. Natural randomized delays between messages prevent WhatsApp automated bot detection, while daily safety ceilings protect account reputation.
+                                    </p>
+                                </div>
+
+                                {userRole === 'ADMIN' && (
+                                    <button
+                                        onClick={() => saveAlgorithmParameters()}
+                                        disabled={savingSettings}
+                                        style={{
+                                            padding: '10px 20px',
+                                            background: '#0074BD',
+                                            color: '#FFF',
+                                            border: 'none',
+                                            borderRadius: '8px',
+                                            fontSize: '13px',
+                                            fontWeight: 700,
+                                            cursor: savingSettings ? 'not-allowed' : 'pointer',
+                                            boxShadow: '0 2px 6px rgba(0,116,189,0.25)',
+                                        }}
+                                    >
+                                        {savingSettings ? 'Saving Controls…' : 'Save Algorithm Controls'}
+                                    </button>
+                                )}
+                            </div>
+
+                            {/* Outreach progress bar for today */}
+                            <div style={{ marginTop: '18px', padding: '12px 14px', background: '#F8FAFC', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12.5px', marginBottom: '6px' }}>
+                                    <span style={{ color: '#475569', fontWeight: 600 }}>
+                                        Today&apos;s Outreach: <strong style={{ color: '#0F172A' }}>{sentToday}</strong> / {settings?.max_daily_messages || 25} messages sent
+                                    </span>
+                                    <span style={{ color: (settings?.max_daily_messages || 25) - sentToday <= 10 ? '#DC2626' : '#166534', fontWeight: 700 }}>
+                                        {(settings?.max_daily_messages || 25) - sentToday > 0 ? `${(settings?.max_daily_messages || 25) - sentToday} messages remaining today` : 'Daily safety ceiling reached'}
+                                    </span>
+                                </div>
+                                <div style={{ height: '8px', background: '#E2E8F0', borderRadius: '999px', overflow: 'hidden' }}>
+                                    <div style={{
+                                        width: `${Math.min(100, Math.round((sentToday / Math.max(1, settings?.max_daily_messages || 25)) * 100))}%`,
+                                        height: '100%',
+                                        background: (sentToday / (settings?.max_daily_messages || 25)) >= 0.9 ? '#DC2626' : (sentToday / (settings?.max_daily_messages || 25)) >= 0.75 ? '#D97706' : '#0074BD',
+                                        borderRadius: '999px',
+                                        transition: 'width 0.3s ease',
+                                    }} />
+                                </div>
+                            </div>
+
+                            {/* Quick presets for human pacing */}
+                            {userRole === 'ADMIN' && (
+                                <div style={{ marginTop: '16px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#475569' }}>Quick Timing Presets:</span>
+                                    <button
+                                        onClick={() => applyPreset('natural')}
+                                        type="button"
+                                        style={{ padding: '5px 11px', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '6px', fontSize: '12px', fontWeight: 600, color: '#1E40AF', cursor: 'pointer' }}
+                                    >
+                                        👤 Natural Human (12–25s delay · 8–15 wave)
+                                    </button>
+                                    <button
+                                        onClick={() => applyPreset('fast')}
+                                        type="button"
+                                        style={{ padding: '5px 11px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: '6px', fontSize: '12px', fontWeight: 600, color: '#166534', cursor: 'pointer' }}
+                                    >
+                                        ⚡ Fast Human (8–16s delay · 10–18 wave)
+                                    </button>
+                                    <button
+                                        onClick={() => applyPreset('conservative')}
+                                        type="button"
+                                        style={{ padding: '5px 11px', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '6px', fontSize: '12px', fontWeight: 600, color: '#92400E', cursor: 'pointer' }}
+                                    >
+                                        🛡️ Ultra-Safe Stealth (18–35s delay · 6–10 wave)
+                                    </button>
+                                </div>
+                            )}
+
+                            {/* Configurable Timing & Safety Parameters Grid */}
+                            {userRole === 'ADMIN' && (
+                                <div style={{ marginTop: '18px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '14px', paddingTop: '16px', borderTop: '1px solid #F1F5F9' }}>
+                                    {/* Daily Max */}
+                                    <div style={{ background: '#F8FAFC', padding: '12px 14px', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
+                                        <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#1E293B', marginBottom: '4px' }}>
+                                            Max Daily Messages
+                                        </label>
+                                        <input
+                                            type="number"
+                                            min={10}
+                                            max={600}
+                                            value={maxDailyMessagesInput}
+                                            onChange={e => setMaxDailyMessagesInput(e.target.value)}
+                                            style={controlInputStyle}
+                                        />
+                                        <p style={{ fontSize: '11px', color: '#64748B', margin: '4px 0 0' }}>Safety ceiling before auto-pausing</p>
+                                    </div>
+
+                                    {/* Delay between messages */}
+                                    <div style={{ background: '#F8FAFC', padding: '12px 14px', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
+                                        <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#1E293B', marginBottom: '4px' }}>
+                                            Time Between Messages (Seconds)
+                                        </label>
+                                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                            <input
+                                                type="number"
+                                                min={5}
+                                                max={120}
+                                                value={intraDelayMinInput}
+                                                onChange={e => setIntraDelayMinInput(e.target.value)}
+                                                style={{ ...controlInputStyle, width: '70px' }}
+                                                placeholder="Min"
+                                            />
+                                            <span style={{ fontSize: '12px', color: '#64748B' }}>to</span>
+                                            <input
+                                                type="number"
+                                                min={5}
+                                                max={120}
+                                                value={intraDelayMaxInput}
+                                                onChange={e => setIntraDelayMaxInput(e.target.value)}
+                                                style={{ ...controlInputStyle, width: '70px' }}
+                                                placeholder="Max"
+                                            />
+                                            <span style={{ fontSize: '12px', color: '#64748B' }}>s</span>
+                                        </div>
+                                        <p style={{ fontSize: '11px', color: '#64748B', margin: '4px 0 0' }}>Randomized human jitter (prevents bots)</p>
+                                    </div>
+
+                                    {/* Messages per wave */}
+                                    <div style={{ background: '#F8FAFC', padding: '12px 14px', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
+                                        <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#1E293B', marginBottom: '4px' }}>
+                                            Batch Size (Messages / Wave)
+                                        </label>
+                                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                            <input
+                                                type="number"
+                                                min={1}
+                                                max={50}
+                                                value={waveMinInput}
+                                                onChange={e => setWaveMinInput(e.target.value)}
+                                                style={{ ...controlInputStyle, width: '70px' }}
+                                                placeholder="Min"
+                                            />
+                                            <span style={{ fontSize: '12px', color: '#64748B' }}>to</span>
+                                            <input
+                                                type="number"
+                                                min={1}
+                                                max={50}
+                                                value={waveMaxInput}
+                                                onChange={e => setWaveMaxInput(e.target.value)}
+                                                style={{ ...controlInputStyle, width: '70px' }}
+                                                placeholder="Max"
+                                            />
+                                            <span style={{ fontSize: '12px', color: '#64748B' }}>msgs</span>
+                                        </div>
+                                        <p style={{ fontSize: '11px', color: '#64748B', margin: '4px 0 0' }}>Volume per wave before rest break</p>
+                                    </div>
+
+                                    {/* Break between waves */}
+                                    <div style={{ background: '#F8FAFC', padding: '12px 14px', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
+                                        <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#1E293B', marginBottom: '4px' }}>
+                                            Break Between Batches (Minutes)
+                                        </label>
+                                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                            <input
+                                                type="number"
+                                                min={1}
+                                                max={60}
+                                                value={cooldownMinInput}
+                                                onChange={e => setCooldownMinInput(e.target.value)}
+                                                style={{ ...controlInputStyle, width: '70px' }}
+                                                placeholder="Min"
+                                            />
+                                            <span style={{ fontSize: '12px', color: '#64748B' }}>to</span>
+                                            <input
+                                                type="number"
+                                                min={1}
+                                                max={60}
+                                                value={cooldownMaxInput}
+                                                onChange={e => setCooldownMaxInput(e.target.value)}
+                                                style={{ ...controlInputStyle, width: '70px' }}
+                                                placeholder="Max"
+                                            />
+                                            <span style={{ fontSize: '12px', color: '#64748B' }}>min</span>
+                                        </div>
+                                        <p style={{ fontSize: '11px', color: '#64748B', margin: '4px 0 0' }}>Operator rest period between waves</p>
+                                    </div>
+
+                                    {/* Daily Wave Target */}
+                                    <div style={{ background: '#F8FAFC', padding: '12px 14px', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
+                                        <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#1E293B', marginBottom: '4px' }}>
+                                            Daily Wave Target
+                                        </label>
+                                        <input
+                                            type="number"
+                                            min={1}
+                                            max={100}
+                                            value={dailyWaveTargetInput}
+                                            onChange={e => setDailyWaveTargetInput(e.target.value)}
+                                            style={controlInputStyle}
+                                        />
+                                        <p style={{ fontSize: '11px', color: '#64748B', margin: '4px 0 0' }}>Planned batch waves per day</p>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Inline recommendation notice if active */}
+                            {activeRecommendation && activeRecommendation.type !== 'hold' && (
+                                <div style={{
+                                    marginTop: '16px',
+                                    padding: '12px 16px',
+                                    borderRadius: '10px',
+                                    background: activeRecommendation.type === 'decrease' ? '#FFF1F2' : '#F0FDF4',
+                                    border: `1px solid ${activeRecommendation.type === 'decrease' ? '#FECDD3' : '#BBF7D0'}`,
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    flexWrap: 'wrap',
+                                    gap: '12px',
+                                }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <span>{activeRecommendation.type === 'decrease' ? '⚠️' : '💡'}</span>
+                                        <div>
+                                            <span style={{ fontSize: '13px', fontWeight: 700, color: activeRecommendation.type === 'decrease' ? '#991B1B' : '#166534' }}>
+                                                {activeRecommendation.title}
+                                            </span>
+                                            <p style={{ fontSize: '12px', color: '#475569', margin: '2px 0 0' }}>
+                                                {activeRecommendation.type === 'decrease'
+                                                    ? `Delivery risk detected. Recommended limit: ${activeRecommendation.recommendedMax} msgs/day.`
+                                                    : `Excellent health. Safe to scale up to ${activeRecommendation.recommendedMax} msgs/day.`}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '8px' }}>
+                                        <button
+                                            onClick={() => saveAlgorithmParameters({ max_daily_messages: activeRecommendation.recommendedMax })}
+                                            disabled={savingSettings}
+                                            style={{
+                                                padding: '6px 14px',
+                                                background: activeRecommendation.type === 'decrease' ? '#DC2626' : '#16A34A',
+                                                color: '#FFF',
+                                                border: 'none',
+                                                borderRadius: '6px',
+                                                fontSize: '12px',
+                                                fontWeight: 600,
+                                                cursor: 'pointer',
+                                            }}
+                                        >
+                                            Apply {activeRecommendation.recommendedMax} msgs
+                                        </button>
+                                        <button
+                                            onClick={() => setShowReviewModal(true)}
+                                            style={{
+                                                padding: '6px 12px',
+                                                background: '#FFF',
+                                                color: '#475569',
+                                                border: '1px solid #CBD5E1',
+                                                borderRadius: '6px',
+                                                fontSize: '12px',
+                                                fontWeight: 600,
+                                                cursor: 'pointer',
+                                            }}
+                                        >
+                                            Review Details
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </section>
+
                         {/* Current state tiles */}
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '14px', marginBottom: '16px' }}>
                             <Tile
@@ -252,7 +717,7 @@ export default function BroadcastAlgorithmPerformancePage() {
                             <Tile
                                 label="Delay between messages"
                                 value={`${throttle.intra_delay_min_seconds}–${throttle.intra_delay_max_seconds}s`}
-                                sub="Base 15–30s, stretches with risk"
+                                sub="Human-paced jitter (anti-bot protection)"
                             />
                             <Tile
                                 label="7-day failure rate"
@@ -261,6 +726,14 @@ export default function BroadcastAlgorithmPerformancePage() {
                                 accent={throttle.recent_neg_rate !== null && throttle.recent_neg_rate >= 0.15 ? '#DC2626' : undefined}
                             />
                         </div>
+
+                        {/* 14-Day Projected Outreach Schedule & Estimated Time */}
+                        <ProjectedScheduleTable
+                            currentDailyMax={Number(maxDailyMessagesInput || settings?.max_daily_messages || 25)}
+                            unsentCount={outcomeCounts['pending'] ?? 820}
+                            messagesSentToday={sentToday}
+                            onApplyDayParams={userRole === 'ADMIN' ? handleApplyDayPlan : undefined}
+                        />
 
                         {/* Why the plan is what it is */}
                         <section style={{ background: '#FFF', borderRadius: '14px', border: '1px solid #F0F0F0', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', padding: '16px 20px', marginBottom: '16px' }}>
@@ -362,6 +835,17 @@ export default function BroadcastAlgorithmPerformancePage() {
                         </section>
                     </>
                 )}
+
+                {activeRecommendation && (
+                    <LimitReviewModal
+                        isOpen={showReviewModal}
+                        onClose={() => setShowReviewModal(false)}
+                        recommendation={activeRecommendation}
+                        onApply={async (newLimit) => {
+                            await saveAlgorithmParameters({ max_daily_messages: newLimit })
+                        }}
+                    />
+                )}
             </main>
         </div>
     )
@@ -369,3 +853,14 @@ export default function BroadcastAlgorithmPerformancePage() {
 
 const headerCell: React.CSSProperties = { padding: '12px 18px', fontWeight: 600 }
 const cell: React.CSSProperties = { padding: '12px 18px', fontSize: '13.5px', color: '#1A1A1A' }
+const controlInputStyle: React.CSSProperties = {
+    width: '100%',
+    padding: '8px 10px',
+    borderRadius: '8px',
+    border: '1.5px solid #CBD5E1',
+    fontSize: '13.5px',
+    fontWeight: 700,
+    color: '#1E293B',
+    outline: 'none',
+    background: '#FFF',
+}

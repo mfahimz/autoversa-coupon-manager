@@ -1,0 +1,17 @@
+name: Broadcast Daily Report
+
+on:
+  schedule:
+    # 7:30 PM Asia/Dubai (UTC+4, no daylight saving time)
+    - cron: '30 15 * * *'
+  workflow_dispatch:
+
+jobs:
+  send-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send broadcast daily report
+        run: |
+          curl --retry 2 --retry-delay 10 --fail-with-body \
+            "https://autoversa.misalm.com/api/cron/broadcast-daily-report" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
