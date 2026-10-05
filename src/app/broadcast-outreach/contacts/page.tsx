@@ -99,6 +99,7 @@ export default function BroadcastOutreachContactsPage() {
     const [page, setPage] = useState(1)
     const [pageSize, setPageSize] = useState(20)
     const [updatingId, setUpdatingId] = useState<string | null>(null)
+    const [dispatchError, setDispatchError] = useState<{ contactId: string; message: string } | null>(null)
     const [copying, setCopying] = useState(false)
     const [throttle, setThrottle] = useState<ThrottleStatus | null>(null)
     const [reportingWarning, setReportingWarning] = useState(false)
@@ -368,8 +369,46 @@ export default function BroadcastOutreachContactsPage() {
         window.open(`https://web.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(settings.message_template)}`, '_blank')
         const { data, error } = await supabase.rpc('record_broadcast_contact_sent', { p_contact_id: contact.id })
         const result = data?.[0]
-        if (error || !result) toast.error(error?.message ?? 'WhatsApp opened, but the sent status could not be saved.')
-        else {
+        if (error || !result) {
+            const msg = error?.message ?? 'WhatsApp opened, but the sent status could not be saved.'
+            setDispatchError({ contactId: contact.id, message: msg })
+            toast.error(msg)
+        } else {
+            setDispatchError(null)
+            const sentAt = result.sent_at ?? new Date().toISOString()
+            setContacts(previous => previous.map(item => item.id === contact.id ? { ...item, sent_at: sentAt, sent_by: userId, delivery_status: 'delivered' } : item))
+            setSendState(previous => ({
+                ...previous,
+                current_wave_count: result.current_wave_count,
+                wave_target: result.wave_target,
+                cooldown_until: result.cooldown_until,
+                waves_completed_today: result.waves_completed_today,
+                daily_period_started_at: result.daily_period_started_at,
+                daily_override_extra: result.daily_override_extra,
+            }))
+            setThrottle(previous => previous ? {
+                ...previous,
+                health_score: result.health_score ?? previous.health_score,
+                health_tier: result.health_tier ?? previous.health_tier,
+                eff_daily_wave_target: result.eff_daily_wave_target ?? previous.eff_daily_wave_target,
+                messages_sent_today: (previous.messages_sent_today ?? 0) + 1,
+            } : previous)
+            toast.success('Message marked as sent')
+        }
+        setUpdatingId(null)
+    }
+
+    async function confirmSentWithoutOpening(contact: BroadcastContact) {
+        if (!canSend || !userId) return
+        setUpdatingId(contact.id)
+        const { data, error } = await supabase.rpc('record_broadcast_contact_sent', { p_contact_id: contact.id })
+        const result = data?.[0]
+        if (error || !result) {
+            const msg = error?.message ?? 'Could not save sent status.'
+            setDispatchError({ contactId: contact.id, message: msg })
+            toast.error(msg)
+        } else {
+            setDispatchError(null)
             const sentAt = result.sent_at ?? new Date().toISOString()
             setContacts(previous => previous.map(item => item.id === contact.id ? { ...item, sent_at: sentAt, sent_by: userId, delivery_status: 'delivered' } : item))
             setSendState(previous => ({
@@ -427,13 +466,17 @@ export default function BroadcastOutreachContactsPage() {
                 if (!canSend || !userId || cooldownActive || dailyBlocked || updatingId) return
                 if (!nextUnsentContact) return
                 e.preventDefault()
-                void sendMessage(nextUnsentContact)
+                if (dispatchError && dispatchError.contactId === nextUnsentContact.id) {
+                    void confirmSentWithoutOpening(nextUnsentContact)
+                } else {
+                    void sendMessage(nextUnsentContact)
+                }
             }
         }
 
         window.addEventListener('keydown', handleKeyDown)
         return () => window.removeEventListener('keydown', handleKeyDown)
-    }, [canSend, userId, cooldownActive, dailyBlocked, updatingId, nextUnsentContact, settings.message_template, settings.image_url])
+    }, [canSend, userId, cooldownActive, dailyBlocked, updatingId, nextUnsentContact, settings.message_template, settings.image_url, dispatchError])
 
     return (
         <div style={{ minHeight: '100vh', background: '#F7F7F7', paddingTop: '16px' }}>
@@ -587,6 +630,49 @@ export default function BroadcastOutreachContactsPage() {
                                                 <kbd style={{ background: '#F1F5F9', border: '1px solid #CBD5E1', borderRadius: '4px', padding: '2px 6px', fontSize: '11px', fontFamily: 'monospace', color: '#334155' }}>Enter</kbd>
                                                 <span>to send without clicking · Image is auto-copied to clipboard</span>
                                             </div>
+
+                                            {dispatchError && dispatchError.contactId === nextUnsentContact.id && (
+                                                <div style={{ marginTop: '16px', padding: '14px', borderRadius: '10px', background: '#FEF2F2', border: '1px solid #FCA5A5' }}>
+                                                    <p style={{ margin: '0 0 6px', fontSize: '13px', color: '#991B1B', fontWeight: 700 }}>
+                                                        ⚠️ WhatsApp opened, but saving the sent status failed
+                                                    </p>
+                                                    <p style={{ margin: '0 0 12px', fontSize: '12px', color: '#7F1D1D', lineHeight: 1.4 }}>
+                                                        {dispatchError.message}. If you already dispatched the message in WhatsApp, confirm below to advance to the next contact without opening WhatsApp again.
+                                                    </p>
+                                                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                                        <button
+                                                            onClick={() => confirmSentWithoutOpening(nextUnsentContact)}
+                                                            disabled={updatingId === nextUnsentContact.id}
+                                                            style={{
+                                                                padding: '8px 14px',
+                                                                fontSize: '13px',
+                                                                fontWeight: 600,
+                                                                color: '#FFF',
+                                                                background: '#166534',
+                                                                border: 'none',
+                                                                borderRadius: '6px',
+                                                                cursor: 'pointer',
+                                                            }}
+                                                        >
+                                                            {updatingId === nextUnsentContact.id ? 'Saving…' : 'Confirm Sent & Advance [Space ↵] →'}
+                                                        </button>
+                                                        <button
+                                                            onClick={() => setDispatchError(null)}
+                                                            style={{
+                                                                padding: '8px 12px',
+                                                                fontSize: '12px',
+                                                                color: '#64748B',
+                                                                background: 'transparent',
+                                                                border: '1px solid #CBD5E1',
+                                                                borderRadius: '6px',
+                                                                cursor: 'pointer',
+                                                            }}
+                                                        >
+                                                            Dismiss
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            )}
                                         </>
                                     ) : (
                                         <p style={{ textAlign: 'center', color: '#64748B', fontSize: '13px', margin: 0 }}>
